@@ -2,7 +2,7 @@ use crate::app_theme::{
     ACCENT, PANEL_WIDTH, apply_app_theme, heading_text, panel_frame, section, slider_row,
     value_row, viewport_frame, weak_text,
 };
-use crate::nav_cube::{nav_cube_rect, show_nav_cube};
+use crate::nav_cube::{NavCubeAction, nav_cube_rect, show_nav_cube};
 use crate::orbit_camera::OrbitCamera;
 use crate::parse_gcode::{Toolpath, parse_gcode};
 use crate::toolpath_mesh::{ToolpathMesh, build_toolpath_mesh};
@@ -302,8 +302,10 @@ impl ViewerApp {
         };
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, draw));
-        if let Some(direction) = show_nav_cube(ui, rect, &self.camera) {
-            self.camera.snap_to_direction(direction);
+        match show_nav_cube(ui, rect, &self.camera) {
+            Some(NavCubeAction::Snap(direction)) => self.camera.snap_to_direction(direction),
+            Some(NavCubeAction::Orbit(delta)) => self.camera.orbit(delta),
+            None => {}
         }
     }
 }

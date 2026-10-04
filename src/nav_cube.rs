@@ -128,8 +128,19 @@ fn cell_direction(face: &Face, cell: (i32, i32)) -> Vec3 {
         .normalize()
 }
 
-/// Draws the navigation cube and returns the view direction of a clicked face, edge or corner.
-pub fn show_nav_cube(ui: &mut egui::Ui, viewport: Rect, camera: &OrbitCamera) -> Option<Vec3> {
+pub enum NavCubeAction {
+    /// Snap to the view direction of a clicked face, edge or corner.
+    Snap(Vec3),
+    /// Orbit by a drag, in points.
+    Orbit(glam::Vec2),
+}
+
+/// Draws the navigation cube and returns what the user did with it this frame.
+pub fn show_nav_cube(
+    ui: &mut egui::Ui,
+    viewport: Rect,
+    camera: &OrbitCamera,
+) -> Option<NavCubeAction> {
     let area = nav_cube_rect(viewport);
     let response = ui.interact(area, ui.id().with("nav_cube"), Sense::click_and_drag());
     let (right, up) = camera.right_and_up();
@@ -141,7 +152,11 @@ pub fn show_nav_cube(ui: &mut egui::Ui, viewport: Rect, camera: &OrbitCamera) ->
     let toward_viewer = camera.view_direction();
     let hover = response.hover_pos();
     let painter = ui.painter();
-    let mut clicked_direction = None;
+    let mut action = None;
+    if response.dragged_by(egui::PointerButton::Primary) {
+        let delta = response.drag_delta();
+        action = Some(NavCubeAction::Orbit(glam::Vec2::new(delta.x, delta.y)));
+    }
     for face in FACES
         .iter()
         .filter(|face| face.normal.dot(toward_viewer) > FACE_FACING_EPSILON)
@@ -172,7 +187,7 @@ pub fn show_nav_cube(ui: &mut egui::Ui, viewport: Rect, camera: &OrbitCamera) ->
                 Stroke::NONE,
             ));
             if response.clicked() {
-                clicked_direction = Some(cell_direction(face, cell));
+                action = Some(NavCubeAction::Snap(cell_direction(face, cell)));
             }
         }
         let face_center = projection.project(face.normal);
@@ -184,7 +199,7 @@ pub fn show_nav_cube(ui: &mut egui::Ui, viewport: Rect, camera: &OrbitCamera) ->
             LABEL_COLOR,
         );
     }
-    clicked_direction
+    action
 }
 
 #[cfg(test)]
