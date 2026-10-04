@@ -9,7 +9,9 @@ keywords = ["gcode", "3d-printing", "viewer", "wgpu", "egui"]
 categories = ["visualization"]
 
 [dependencies]
+ab_glyph = "0.2"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "wayland", "x11", "default_fonts"] }
 glam = "0.30"
+image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.17.2"

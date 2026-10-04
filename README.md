@@ -54,6 +54,8 @@ This builds the project and installs:
 
 Thumbnails only appear for files that contain an embedded preview image (PrusaSlicer, OrcaSlicer and ElegooSlicer all write one).
 
+The thumbnailer flattens the preview onto white and adds a small `GCODE` label in the top right corner, drawn with the bundled Liberation Sans font (`assets/`, SIL Open Font License).
+
 ## Controls
 
 | Input | Action |
