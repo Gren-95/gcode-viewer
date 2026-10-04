@@ -1,5 +1,5 @@
 use crate::app_theme::{
-    ACCENT, PANEL_WIDTH, SPACING_UNIT, apply_app_theme, heading_text, panel_frame, section, slider_row,
+    ACCENT, PANEL_WIDTH, SPACING_UNIT, apply_app_theme, heading_text, panel_frame, section, slider_row, subsection,
     value_row, viewport_frame, weak_text,
 };
 use crate::color_scheme::{ColorMode, FEATURE_COLORS, tool_palette};
@@ -244,40 +244,37 @@ impl ViewerApp {
             if let Some(seconds) = model.toolpath.estimated_seconds {
                 value_row(ui, "Print time", format_duration(seconds));
             }
-            egui::CollapsingHeader::new("Details")
-                .id_salt("file_details")
-                .default_open(false)
-                .show(ui, |ui| {
+            subsection(ui, "Details", false, |ui| {
+                value_row(
+                    ui,
+                    "Extrusion moves",
+                    format_count(model.toolpath.extrude_move_count),
+                );
+                value_row(
+                    ui,
+                    "Travel moves",
+                    format_count(model.toolpath.travel_move_count),
+                );
+                value_row(
+                    ui,
+                    "Travel distance",
+                    format!("{:.2} m", model.toolpath.travel_distance_mm / 1000.0),
+                );
+                if model.toolpath.tool_change_count > 0 {
                     value_row(
                         ui,
-                        "Extrusion moves",
-                        format_count(model.toolpath.extrude_move_count),
+                        "Tool changes",
+                        format_count(model.toolpath.tool_change_count),
                     );
+                }
+                if model.toolpath.manual_change_count > 0 {
                     value_row(
                         ui,
-                        "Travel moves",
-                        format_count(model.toolpath.travel_move_count),
+                        "Filament pauses (M600)",
+                        format_count(model.toolpath.manual_change_count),
                     );
-                    value_row(
-                        ui,
-                        "Travel distance",
-                        format!("{:.2} m", model.toolpath.travel_distance_mm / 1000.0),
-                    );
-                    if model.toolpath.tool_change_count > 0 {
-                        value_row(
-                            ui,
-                            "Tool changes",
-                            format_count(model.toolpath.tool_change_count),
-                        );
-                    }
-                    if model.toolpath.manual_change_count > 0 {
-                        value_row(
-                            ui,
-                            "Filament pauses (M600)",
-                            format_count(model.toolpath.manual_change_count),
-                        );
-                    }
-                });
+                }
+            });
         });
         section(ui, "Layers", true, |ui| {
             let top_layer = layer_count - 1;

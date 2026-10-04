@@ -11,6 +11,10 @@ const CARD_FILL: Color32 = Color32::from_rgb(33, 36, 43);
 const HEADER_FILL: Color32 = Color32::from_rgb(41, 45, 54);
 const HEADER_HOVER_FILL: Color32 = Color32::from_rgb(50, 55, 66);
 const HEADER_HEIGHT: f32 = 32.0;
+const SUBHEADER_HEIGHT: f32 = 26.0;
+const SUBCARD_FILL: Color32 = Color32::from_rgb(40, 44, 53);
+const SUBCARD_RADIUS: u8 = 8;
+const SUBCARD_PADDING: i8 = 10;
 const HEADER_PADDING: f32 = 10.0;
 const ICON_SIZE: f32 = 12.0;
 const WIDGET_FILL: Color32 = Color32::from_rgb(47, 51, 61);
@@ -61,27 +65,75 @@ pub fn viewport_frame() -> egui::Frame {
     egui::Frame::NONE.fill(VIEWPORT_FILL)
 }
 
+struct CardStyle {
+    card_fill: Color32,
+    header_fill: Color32,
+    header_hover_fill: Color32,
+    radius: u8,
+    header_height: f32,
+    body_padding: i8,
+}
+
+const SECTION_STYLE: CardStyle = CardStyle {
+    card_fill: CARD_FILL,
+    header_fill: HEADER_FILL,
+    header_hover_fill: HEADER_HOVER_FILL,
+    radius: CARD_RADIUS,
+    header_height: HEADER_HEIGHT,
+    body_padding: CARD_PADDING,
+};
+
+const SUBSECTION_STYLE: CardStyle = CardStyle {
+    card_fill: SUBCARD_FILL,
+    header_fill: WIDGET_FILL,
+    header_hover_fill: WIDGET_HOVER_FILL,
+    radius: SUBCARD_RADIUS,
+    header_height: SUBHEADER_HEIGHT,
+    body_padding: SUBCARD_PADDING,
+};
+
 pub fn section(
     ui: &mut egui::Ui,
     title: &str,
     default_open: bool,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    let id = ui.make_persistent_id(("section", title));
+    collapsible_card(ui, title, default_open, &SECTION_STYLE, add_contents);
+    ui.add_space(SPACING_UNIT);
+}
+
+/// A smaller collapsible card meant to sit inside a section.
+pub fn subsection(
+    ui: &mut egui::Ui,
+    title: &str,
+    default_open: bool,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    collapsible_card(ui, title, default_open, &SUBSECTION_STYLE, add_contents);
+}
+
+fn collapsible_card(
+    ui: &mut egui::Ui,
+    title: &str,
+    default_open: bool,
+    style: &CardStyle,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let id = ui.make_persistent_id(("collapsible_card", title));
     let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
     egui::Frame::NONE
-        .fill(CARD_FILL)
-        .corner_radius(CornerRadius::same(CARD_RADIUS))
+        .fill(style.card_fill)
+        .corner_radius(CornerRadius::same(style.radius))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
-            if section_header(ui, title, state.openness(ui.ctx())).clicked() {
+            if card_header(ui, title, state.openness(ui.ctx()), style).clicked() {
                 state.toggle(ui);
             }
             ui.spacing_mut().item_spacing.y = SPACING_UNIT;
             state.show_body_unindented(ui, |ui| {
                 egui::Frame::NONE
-                    .inner_margin(Margin::same(CARD_PADDING))
+                    .inner_margin(Margin::same(style.body_padding))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         add_contents(ui);
@@ -89,23 +141,27 @@ pub fn section(
             });
         });
     state.store(ui.ctx());
-    ui.add_space(SPACING_UNIT);
 }
 
-fn section_header(ui: &mut egui::Ui, title: &str, openness: f32) -> egui::Response {
+fn card_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    openness: f32,
+    style: &CardStyle,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), HEADER_HEIGHT),
+        egui::vec2(ui.available_width(), style.header_height),
         egui::Sense::click(),
     );
     let fill = if response.hovered() {
-        HEADER_HOVER_FILL
+        style.header_hover_fill
     } else {
-        HEADER_FILL
+        style.header_fill
     };
-    let bottom_radius = if openness > 0.0 { 0 } else { CARD_RADIUS };
+    let bottom_radius = if openness > 0.0 { 0 } else { style.radius };
     let rounding = CornerRadius {
-        nw: CARD_RADIUS,
-        ne: CARD_RADIUS,
+        nw: style.radius,
+        ne: style.radius,
         sw: bottom_radius,
         se: bottom_radius,
     };
