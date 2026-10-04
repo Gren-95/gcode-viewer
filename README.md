@@ -1,5 +1,7 @@
 # Gcode Viewer
 
+![Gcode Viewer showing a shaded toolpath with shadows](docs/screenshot.png)
+
 A standalone 3D G-code viewer for Linux, written in Rust with egui and wgpu. Open a `.gcode` file and orbit the toolpath, scrub through layers and switch between fast flat lines and lit, shadowed rendering.
 
 ## Features
