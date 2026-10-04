@@ -10,7 +10,7 @@ struct Uniforms {
     plane: vec4<f32>,
     palette: array<vec4<f32>, 5>,
     type_colors: array<vec4<f32>, 12>,
-    // x: colour mode (0 height, 1 speed, 2 layer, 3 feature type)
+    // x: colour mode (0 height, 1 speed, 2 layer, 3 feature type, 4 filament)
     color_mode: vec4<f32>,
 };
 
@@ -115,11 +115,15 @@ fn palette_color(t: f32) -> vec3<f32> {
     return mix(uniforms.palette[index].rgb, uniforms.palette[index + 1u].rgb, scaled - f32(index));
 }
 
-// values: x height, y speed, z layer (all 0..1), w feature index
+// values: x height, y speed, z layer (all 0..1), w feature index + 16 * tool index
 fn extrude_color(values: vec4<f32>) -> vec3<f32> {
     let mode = u32(uniforms.color_mode.x);
+    let packed = u32(values.w);
     if (mode == 3u) {
-        return uniforms.type_colors[u32(values.w)].rgb;
+        return uniforms.type_colors[packed % 16u].rgb;
+    }
+    if (mode == 4u) {
+        return uniforms.type_colors[packed / 16u].rgb;
     }
     return palette_color(values[mode]);
 }

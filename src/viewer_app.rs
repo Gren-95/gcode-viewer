@@ -2,11 +2,11 @@ use crate::app_theme::{
     ACCENT, PANEL_WIDTH, apply_app_theme, heading_text, panel_frame, section, slider_row,
     value_row, viewport_frame, weak_text,
 };
-use crate::color_scheme::{ColorMode, FEATURE_COLORS};
+use crate::color_scheme::{ColorMode, FEATURE_COLORS, tool_palette};
 use crate::layer_player::LayerPlayer;
 use crate::nav_cube::{NavCubeAction, nav_cube_rect, show_nav_cube};
 use crate::orbit_camera::OrbitCamera;
-use crate::parse_gcode::{Toolpath, parse_gcode};
+use crate::parse_gcode::{MAX_FEATURES, Toolpath, parse_gcode};
 use crate::sidebar_widgets::{
     SegmentOption, color_legend, format_count, format_duration, gradient_bar, segmented_picker,
 };
@@ -40,6 +40,21 @@ struct LoadedModel {
     file_name: String,
     toolpath: Toolpath,
     mesh: ToolpathMesh,
+    tool_colors: [[f32; 4]; MAX_FEATURES],
+}
+
+fn used_tools(toolpath: &Toolpath) -> Vec<usize> {
+    (0..MAX_FEATURES)
+        .filter(|tool| toolpath.filament_mm_by_tool[*tool] > 0.0)
+        .collect()
+}
+
+fn color_mode_available(mode: ColorMode, toolpath: &Toolpath) -> bool {
+    match mode {
+        ColorMode::Feature => !toolpath.feature_names.is_empty(),
+        ColorMode::Filament => used_tools(toolpath).len() > 1,
+        _ => true,
+    }
 }
 
 pub struct ViewerApp {
@@ -112,7 +127,7 @@ impl ViewerApp {
         self.last_layer = toolpath.layer_count - 1;
         self.error_message = None;
         self.player.stop();
-        if toolpath.feature_names.is_empty() && self.color_mode == ColorMode::Feature {
+        if !color_mode_available(self.color_mode, &toolpath) {
             self.color_mode = ColorMode::Height;
         }
         self.model = Some(LoadedModel {
@@ -120,6 +135,7 @@ impl ViewerApp {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            tool_colors: tool_palette(&toolpath.filament_colors),
             toolpath,
             mesh,
         });
@@ -159,8 +175,10 @@ impl ViewerApp {
         if ctx.input(|input| input.key_pressed(Key::C))
             && let Some(model) = &self.model
         {
-            let has_features = !model.toolpath.feature_names.is_empty();
-            self.color_mode = self.color_mode.next(has_features);
+            let toolpath = &model.toolpath;
+            self.color_mode = self
+                .color_mode
+                .next(|mode| color_mode_available(mode, toolpath));
         }
         let space_pressed = ctx.input(|input| input.key_pressed(Key::Space));
         if space_pressed && let Some(model) = &self.model {
@@ -241,6 +259,20 @@ impl ViewerApp {
                 "Travel distance",
                 format!("{:.2} m", model.toolpath.travel_distance_mm / 1000.0),
             );
+            if model.toolpath.tool_change_count > 0 {
+                value_row(
+                    ui,
+                    "Tool changes",
+                    format_count(model.toolpath.tool_change_count),
+                );
+            }
+            if model.toolpath.manual_change_count > 0 {
+                value_row(
+                    ui,
+                    "Filament pauses (M600)",
+                    format_count(model.toolpath.manual_change_count),
+                );
+            }
         });
         section(ui, "Layers", |ui| {
             let top_layer = layer_count - 1;
@@ -351,6 +383,7 @@ impl ViewerApp {
             camera_position: self.camera.eye(),
             quality: self.quality,
             color_mode: self.color_mode,
+            tool_colors: model.tool_colors,
             light: self.light,
             extrude_range: model
                 .mesh
@@ -410,17 +443,18 @@ impl eframe::App for ViewerApp {
 }
 
 fn show_color_controls(ui: &mut egui::Ui, color_mode: &mut ColorMode, toolpath: &Toolpath) {
-    let has_features = !toolpath.feature_names.is_empty();
-    segmented_picker(
-        ui,
-        color_mode,
-        &ColorMode::ALL.map(|mode| SegmentOption {
-            value: mode,
-            label: mode.label(),
-            tooltip: mode.description(),
-            enabled: mode != ColorMode::Feature || has_features,
-        }),
-    );
+    egui::ComboBox::from_id_salt("color_mode")
+        .width(ui.available_width())
+        .selected_text(color_mode.label())
+        .show_ui(ui, |ui| {
+            for mode in ColorMode::ALL {
+                let available = color_mode_available(mode, toolpath);
+                ui.add_enabled_ui(available, |ui| {
+                    ui.selectable_value(color_mode, mode, mode.label())
+                        .on_hover_text(mode.description());
+                });
+            }
+        });
     match *color_mode {
         ColorMode::Height => gradient_bar(
             ui,
@@ -441,11 +475,27 @@ fn show_color_controls(ui: &mut egui::Ui, color_mode: &mut ColorMode, toolpath: 
             &toolpath.layer_count.to_string(),
         ),
         ColorMode::Feature => {
-            let entries: Vec<(&str, [f32; 4])> = toolpath
+            let entries: Vec<(String, [f32; 4])> = toolpath
                 .feature_names
                 .iter()
+                .cloned()
                 .zip(FEATURE_COLORS)
-                .map(|(name, color)| (name.as_str(), color))
+                .collect();
+            color_legend(ui, &entries);
+        }
+        ColorMode::Filament => {
+            let palette = tool_palette(&toolpath.filament_colors);
+            let entries: Vec<(String, [f32; 4])> = used_tools(toolpath)
+                .into_iter()
+                .map(|tool| {
+                    let material = toolpath
+                        .filament_types
+                        .get(tool)
+                        .map(|name| format!(" · {name}"))
+                        .unwrap_or_default();
+                    let used_m = toolpath.filament_mm_by_tool[tool] / 1000.0;
+                    (format!("T{tool}{material} · {used_m:.2} m"), palette[tool])
+                })
                 .collect();
             color_legend(ui, &entries);
         }

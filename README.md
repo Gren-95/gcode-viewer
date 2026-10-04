@@ -10,8 +10,8 @@ A standalone 3D G-code viewer for Linux, written in Rust with egui and wgpu. Ope
 - Navigation cube: drag to orbit, or click a face, edge or corner to snap to that view
 - CAD style number key views and an orthographic projection option
 - Layer range sliders (top and bottom layer), with a play button that animates the print layer by layer
-- Colour by height, speed, layer or feature type (from `;TYPE:` and `; FEATURE:` comments)
-- File statistics: print time (when the slicer reports it), extrusion and travel move counts, travel distance
+- Colour by height, speed, layer, feature type (from `;TYPE:` and `; FEATURE:` comments) or filament (tool changes, using the slicer's `filament_colour`)
+- File statistics: print time (when the slicer reports it), extrusion and travel move counts, travel distance, tool changes and `M600` pauses, plus filament used per tool
 - Optional travel move display
 - Three render modes: Fast (flat lines, best for large models), Shaded, and Shaded with shadows
 - Adjustable light direction and height

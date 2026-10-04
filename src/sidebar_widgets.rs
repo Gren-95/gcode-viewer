@@ -72,7 +72,7 @@ pub fn gradient_bar(ui: &mut egui::Ui, stops: &[[f32; 4]], low_label: &str, high
     });
 }
 
-pub fn color_legend(ui: &mut egui::Ui, entries: &[(&str, [f32; 4])]) {
+pub fn color_legend(ui: &mut egui::Ui, entries: &[(String, [f32; 4])]) {
     for (name, color) in entries {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(SWATCH_SIZE, SWATCH_SIZE), Sense::hover());

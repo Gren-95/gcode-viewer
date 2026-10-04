@@ -1,6 +1,7 @@
 use crate::parse_gcode::MAX_FEATURES;
 
 pub const PALETTE_STOPS: usize = 5;
+const MIN_TOOL_CHANNEL: f32 = 0.07;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColorMode {
@@ -8,20 +9,25 @@ pub enum ColorMode {
     Speed,
     Layer,
     Feature,
+    Filament,
 }
 
 impl ColorMode {
-    pub const ALL: [ColorMode; 4] = [Self::Height, Self::Speed, Self::Layer, Self::Feature];
+    pub const ALL: [ColorMode; 5] = [
+        Self::Height,
+        Self::Speed,
+        Self::Layer,
+        Self::Feature,
+        Self::Filament,
+    ];
 
     /// The next mode in order, skipping feature colouring when `has_features` is false.
-    pub fn next(self, has_features: bool) -> ColorMode {
+    pub fn next(self, available: impl Fn(ColorMode) -> bool) -> ColorMode {
         let position = Self::ALL.iter().position(|mode| *mode == self).unwrap_or(0);
-        let next = Self::ALL[(position + 1) % Self::ALL.len()];
-        if next == Self::Feature && !has_features {
-            Self::Height
-        } else {
-            next
-        }
+        (1..=Self::ALL.len())
+            .map(|step| Self::ALL[(position + step) % Self::ALL.len()])
+            .find(|mode| available(*mode))
+            .unwrap_or(self)
     }
 
     pub fn shader_index(self) -> f32 {
@@ -30,6 +36,7 @@ impl ColorMode {
             Self::Speed => 1.0,
             Self::Layer => 2.0,
             Self::Feature => 3.0,
+            Self::Filament => 4.0,
         }
     }
 
@@ -39,6 +46,7 @@ impl ColorMode {
             Self::Speed => "Speed",
             Self::Layer => "Layer",
             Self::Feature => "Type",
+            Self::Filament => "Filament",
         }
     }
 
@@ -48,13 +56,14 @@ impl ColorMode {
             Self::Speed => "Colour by feed rate, slow to fast.",
             Self::Layer => "Colour by layer number.",
             Self::Feature => "Colour by feature type (needs ;TYPE: or ; FEATURE: comments).",
+            Self::Filament => "Colour by tool, using the slicer's filament colours.",
         }
     }
 
     /// Gradient stops as sRGB colours, evenly spaced from 0 to 1.
     pub fn palette(self) -> [[f32; 4]; PALETTE_STOPS] {
         match self {
-            Self::Height | Self::Feature => HEIGHT_PALETTE,
+            Self::Height | Self::Feature | Self::Filament => HEIGHT_PALETTE,
             Self::Speed => SPEED_PALETTE,
             Self::Layer => LAYER_PALETTE,
         }
@@ -100,19 +109,48 @@ pub const FEATURE_COLORS: [[f32; 4]; MAX_FEATURES] = [
     [0.45, 0.45, 0.50, 1.0],
 ];
 
+/// Colours per tool: the slicer's filament colour when known, otherwise a distinct palette entry.
+/// Very dark colours are lifted slightly so black filament stays visible on the dark scene.
+pub fn tool_palette(filament_colors: &[Option<[f32; 3]>]) -> [[f32; 4]; MAX_FEATURES] {
+    let mut palette = FEATURE_COLORS;
+    for (slot, color) in palette.iter_mut().zip(filament_colors) {
+        if let Some([red, green, blue]) = color {
+            *slot = [
+                red.max(MIN_TOOL_CHANNEL),
+                green.max(MIN_TOOL_CHANNEL),
+                blue.max(MIN_TOOL_CHANNEL),
+                1.0,
+            ];
+        }
+    }
+    palette
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn should_cycle_through_all_modes() {
-        assert_eq!(ColorMode::Height.next(true), ColorMode::Speed);
-        assert_eq!(ColorMode::Layer.next(true), ColorMode::Feature);
-        assert_eq!(ColorMode::Feature.next(true), ColorMode::Height);
+        let all = |_: ColorMode| true;
+        assert_eq!(ColorMode::Height.next(all), ColorMode::Speed);
+        assert_eq!(ColorMode::Feature.next(all), ColorMode::Filament);
+        assert_eq!(ColorMode::Filament.next(all), ColorMode::Height);
     }
 
     #[test]
-    fn should_skip_feature_mode_without_feature_comments() {
-        assert_eq!(ColorMode::Layer.next(false), ColorMode::Height);
+    fn should_skip_unavailable_modes() {
+        let without_features = |mode: ColorMode| mode != ColorMode::Feature;
+        assert_eq!(ColorMode::Layer.next(without_features), ColorMode::Filament);
+        let only_height = |mode: ColorMode| mode == ColorMode::Height;
+        assert_eq!(ColorMode::Layer.next(only_height), ColorMode::Height);
+    }
+
+    #[test]
+    fn should_use_slicer_colours_and_lift_black() {
+        let palette = tool_palette(&[Some([0.0, 0.0, 0.0]), None, Some([1.0, 0.5, 0.3])]);
+        assert!(palette[0][0] >= MIN_TOOL_CHANNEL && palette[0][0] < 0.2);
+        assert_eq!(palette[1], FEATURE_COLORS[1]);
+        assert_eq!(palette[2], [1.0, 0.5, 0.3, 1.0]);
     }
 }

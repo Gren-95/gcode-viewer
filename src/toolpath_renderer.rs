@@ -472,6 +472,7 @@ pub struct ToolpathDraw {
     pub camera_position: Vec3,
     pub quality: RenderQuality,
     pub color_mode: ColorMode,
+    pub tool_colors: [[f32; 4]; MAX_FEATURES],
     pub light: LightAngles,
     pub extrude_range: Range<u32>,
     pub travel_range: Option<Range<u32>>,
@@ -497,7 +498,11 @@ impl ToolpathDraw {
             ],
             plane: scene.plane,
             palette: self.color_mode.palette(),
-            type_colors: FEATURE_COLORS,
+            type_colors: if self.color_mode == ColorMode::Filament {
+                self.tool_colors
+            } else {
+                FEATURE_COLORS
+            },
             color_mode: [self.color_mode.shader_index(), 0.0, 0.0, 0.0],
         }
     }

@@ -6,13 +6,15 @@ const DEFAULT_LAYER_HEIGHT_MM: f32 = 0.2;
 const MIN_LAYER_HEIGHT_MM: f32 = 0.05;
 const MAX_LAYER_HEIGHT_MM: f32 = 0.8;
 pub const LINE_WIDTH_MM: f32 = 0.45;
+/// The fourth instance value packs `feature + tool * TOOL_STRIDE`.
+const TOOL_STRIDE: f32 = 16.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct ExtrudeInstance {
     pub from: [f32; 3],
     pub to: [f32; 3],
-    /// Normalised height, speed and layer in 0..1, then the feature index.
+    /// Normalised height, speed and layer in 0..1, then feature index plus tool index times 16.
     pub values: [f32; 4],
 }
 
@@ -108,7 +110,7 @@ pub fn build_toolpath_mesh(toolpath: &Toolpath) -> ToolpathMesh {
                         normalized_height(segment.to.z),
                         ((segment.speed - toolpath.speed_min) / speed_span).clamp(0.0, 1.0),
                         (segment.layer as f32 / layer_span).clamp(0.0, 1.0),
-                        f32::from(segment.feature),
+                        f32::from(segment.feature) + f32::from(segment.tool) * TOOL_STRIDE,
                     ],
                 });
             }

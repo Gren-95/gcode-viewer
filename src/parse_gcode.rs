@@ -24,6 +24,8 @@ pub struct Segment {
     pub speed: f32,
     /// Index into `Toolpath::feature_names`, 0 when the file has no feature comments.
     pub feature: u8,
+    /// Active tool (`T<n>`), 0 until the first tool command.
+    pub tool: u8,
 }
 
 #[derive(Default, Debug)]
@@ -46,6 +48,14 @@ pub struct Toolpath {
     pub extrude_move_count: usize,
     pub travel_move_count: usize,
     pub travel_distance_mm: f32,
+    /// Filament colours from the slicer's `filament_colour` comment, indexed by tool.
+    pub filament_colors: Vec<Option<[f32; 3]>>,
+    pub filament_types: Vec<String>,
+    pub filament_mm_by_tool: [f32; MAX_FEATURES],
+    /// Switches between tools after printing has started.
+    pub tool_change_count: usize,
+    /// `M600` filament change pauses.
+    pub manual_change_count: usize,
 }
 
 struct ParserState {
@@ -56,6 +66,7 @@ struct ParserState {
     unit_scale: f32,
     feedrate_mm_s: f32,
     feature: u8,
+    tool: u8,
     layer: u32,
     layer_z: Option<f32>,
     toolpath: Toolpath,
@@ -71,6 +82,7 @@ impl ParserState {
             unit_scale: 1.0,
             feedrate_mm_s: 0.0,
             feature: 0,
+            tool: 0,
             layer: 0,
             layer_z: None,
             toolpath: Toolpath::default(),
@@ -86,6 +98,7 @@ impl ParserState {
         if kind == MoveKind::Extrude {
             self.advance_layer(to.z);
             self.toolpath.filament_mm += extruded;
+            self.toolpath.filament_mm_by_tool[usize::from(self.tool)] += extruded;
         }
         self.toolpath.segments.push(Segment {
             from: self.position,
@@ -94,6 +107,7 @@ impl ParserState {
             layer: self.layer,
             speed: self.feedrate_mm_s,
             feature: self.feature,
+            tool: self.tool,
         });
         self.position = to;
     }
@@ -229,7 +243,19 @@ impl ParserState {
             self.set_feature(name);
         } else if let Some(seconds) = estimated_seconds(line) {
             self.toolpath.estimated_seconds = Some(seconds);
+        } else if let Some(list) = line.strip_prefix("; filament_colour =") {
+            self.toolpath.filament_colors = parse_filament_colors(list);
+        } else if let Some(list) = line.strip_prefix("; filament_type =") {
+            self.toolpath.filament_types = list.split(';').map(|name| name.trim().to_string()).collect();
         }
+    }
+
+    fn select_tool(&mut self, tool: u8) {
+        let tool = tool.min((MAX_FEATURES - 1) as u8);
+        if tool != self.tool && self.toolpath.filament_mm > 0.0 {
+            self.toolpath.tool_change_count += 1;
+        }
+        self.tool = tool;
     }
 
     fn set_feature(&mut self, name: &str) {
@@ -254,6 +280,10 @@ impl ParserState {
         if matches!(command, "G0" | "G1" | "G2" | "G3") {
             self.apply_feedrate(words);
         }
+        if let Some(tool) = command.strip_prefix('T').and_then(|number| number.parse::<u8>().ok()) {
+            self.select_tool(tool);
+            return;
+        }
         match command {
             "G0" | "G1" => self.linear_move(words),
             "G2" => self.arc_move(words, true),
@@ -269,6 +299,7 @@ impl ParserState {
                 self.relative_extruder = true;
             }
             "G92" => self.set_position(words),
+            "M600" => self.toolpath.manual_change_count += 1,
             "M82" => self.relative_extruder = false,
             "M83" => self.relative_extruder = true,
             _ => {}
@@ -302,6 +333,21 @@ impl Words {
             _ => {}
         }
     }
+}
+
+fn parse_filament_colors(list: &str) -> Vec<Option<[f32; 3]>> {
+    list.split(';').map(|entry| parse_hex_color(entry.trim())).collect()
+}
+
+fn parse_hex_color(entry: &str) -> Option<[f32; 3]> {
+    let digits = entry.strip_prefix('#')?;
+    if digits.len() != 6 {
+        return None;
+    }
+    let channel = |range: std::ops::Range<usize>| {
+        u8::from_str_radix(&digits[range], 16).ok().map(|value| f32::from(value) / 255.0)
+    };
+    Some([channel(0..2)?, channel(2..4)?, channel(4..6)?])
 }
 
 fn feature_name(line: &str) -> Option<&str> {
@@ -523,6 +569,35 @@ mod tests {
         let toolpath = parse_gcode("G1 X5 E1\n; estimated printing time (normal mode) = 1d 2h 3m 4s\n");
         assert_eq!(toolpath.estimated_seconds, Some(86_400 + 7_200 + 180 + 4));
         assert_eq!(parse_duration_seconds("garbage"), None);
+    }
+
+    #[test]
+    fn should_track_tools_and_filament_per_tool() {
+        let toolpath = parse_gcode(
+            "T0\nG1 X5 E1\nT1\nG1 X10 E3\nT0\nG1 X15 E4\nM600\n",
+        );
+        let tools: Vec<u8> = toolpath.segments.iter().map(|segment| segment.tool).collect();
+        assert_eq!(tools, vec![0, 1, 0]);
+        assert_eq!(toolpath.tool_change_count, 2);
+        assert_eq!(toolpath.manual_change_count, 1);
+        assert!((toolpath.filament_mm_by_tool[1] - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn should_not_count_initial_tool_selection_as_a_change() {
+        let toolpath = parse_gcode("T2\nG1 X5 E1\n");
+        assert_eq!(toolpath.tool_change_count, 0);
+    }
+
+    #[test]
+    fn should_parse_slicer_filament_colours_and_types() {
+        let toolpath = parse_gcode(
+            "G1 X5 E1\n; filament_colour = #FF0000;;#00FF80\n; filament_type = PLA;PETG;TPU\n",
+        );
+        assert_eq!(toolpath.filament_colors[0], Some([1.0, 0.0, 0.0]));
+        assert_eq!(toolpath.filament_colors[1], None);
+        assert!((toolpath.filament_colors[2].unwrap()[1] - 1.0).abs() < 1e-6);
+        assert_eq!(toolpath.filament_types, vec!["PLA", "PETG", "TPU"]);
     }
 
     #[test]
