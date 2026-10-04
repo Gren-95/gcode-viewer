@@ -2,6 +2,11 @@
 name = "gcode-viewer"
 version = "0.1.0"
 edition = "2024"
+description = "A fast 3D G-code toolpath viewer with optional shading and shadows"
+license = "GPL-3.0-only"
+repository = "https://github.com/Gren-95/gcode-viewer"
+keywords = ["gcode", "3d-printing", "viewer", "wgpu", "egui"]
+categories = ["visualization"]
 
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
