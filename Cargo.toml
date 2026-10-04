@@ -1,0 +1,10 @@
+[package]
+name = "gcode-viewer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "wayland", "x11", "default_fonts"] }
+glam = "0.30"
+rfd = "0.17.2"

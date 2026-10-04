@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Gcode Viewer
+GenericName=Gcode Viewer
+Comment=View 3D printer G-code toolpaths
+Exec=@BIN_PATH@ %f
+Icon=gcode-viewer
+Terminal=false
+Categories=Graphics;3DGraphics;Viewer;
+MimeType=text/x.gcode;
+StartupWMClass=gcode-viewer
+Keywords=gcode;3d printing;toolpath;

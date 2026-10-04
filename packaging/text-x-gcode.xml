@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x.gcode">
+    <comment>G-code file</comment>
+    <icon name="gcode-viewer-file"/>
+    <glob pattern="*.gcode"/>
+    <glob pattern="*.gco"/>
+  </mime-type>
+</mime-info>

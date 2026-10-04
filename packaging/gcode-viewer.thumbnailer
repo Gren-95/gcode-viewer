@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=@THUMBNAILER_PATH@
+Exec=@THUMBNAILER_PATH@ %i %o
+MimeType=text/x.gcode;
