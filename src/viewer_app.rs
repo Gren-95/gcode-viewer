@@ -1,5 +1,5 @@
 use crate::app_theme::{
-    ACCENT, PANEL_WIDTH, apply_app_theme, heading_text, panel_frame, section, slider_row,
+    ACCENT, PANEL_WIDTH, SPACING_UNIT, apply_app_theme, heading_text, panel_frame, section, slider_row,
     value_row, viewport_frame, weak_text,
 };
 use crate::color_scheme::{ColorMode, FEATURE_COLORS, tool_palette};
@@ -228,7 +228,7 @@ impl ViewerApp {
         };
         let layer_count = model.toolpath.layer_count;
         let size = model.toolpath.max - model.toolpath.min;
-        section(ui, "File", |ui| {
+        section(ui, "File", true, |ui| {
             ui.label(heading_text(&model.file_name));
             value_row(ui, "Layers", layer_count.to_string());
             value_row(
@@ -244,37 +244,42 @@ impl ViewerApp {
             if let Some(seconds) = model.toolpath.estimated_seconds {
                 value_row(ui, "Print time", format_duration(seconds));
             }
-            value_row(
-                ui,
-                "Extrusion moves",
-                format_count(model.toolpath.extrude_move_count),
-            );
-            value_row(
-                ui,
-                "Travel moves",
-                format_count(model.toolpath.travel_move_count),
-            );
-            value_row(
-                ui,
-                "Travel distance",
-                format!("{:.2} m", model.toolpath.travel_distance_mm / 1000.0),
-            );
-            if model.toolpath.tool_change_count > 0 {
-                value_row(
-                    ui,
-                    "Tool changes",
-                    format_count(model.toolpath.tool_change_count),
-                );
-            }
-            if model.toolpath.manual_change_count > 0 {
-                value_row(
-                    ui,
-                    "Filament pauses (M600)",
-                    format_count(model.toolpath.manual_change_count),
-                );
-            }
+            egui::CollapsingHeader::new("Details")
+                .id_salt("file_details")
+                .default_open(false)
+                .show(ui, |ui| {
+                    value_row(
+                        ui,
+                        "Extrusion moves",
+                        format_count(model.toolpath.extrude_move_count),
+                    );
+                    value_row(
+                        ui,
+                        "Travel moves",
+                        format_count(model.toolpath.travel_move_count),
+                    );
+                    value_row(
+                        ui,
+                        "Travel distance",
+                        format!("{:.2} m", model.toolpath.travel_distance_mm / 1000.0),
+                    );
+                    if model.toolpath.tool_change_count > 0 {
+                        value_row(
+                            ui,
+                            "Tool changes",
+                            format_count(model.toolpath.tool_change_count),
+                        );
+                    }
+                    if model.toolpath.manual_change_count > 0 {
+                        value_row(
+                            ui,
+                            "Filament pauses (M600)",
+                            format_count(model.toolpath.manual_change_count),
+                        );
+                    }
+                });
         });
-        section(ui, "Layers", |ui| {
+        section(ui, "Layers", true, |ui| {
             let top_layer = layer_count - 1;
             let top_changed = slider_row(
                 ui,
@@ -300,10 +305,10 @@ impl ViewerApp {
             self.player
                 .show_controls(ui, self.first_layer, &mut self.last_layer, top_layer);
         });
-        section(ui, "Colour", |ui| {
+        section(ui, "Colour", true, |ui| {
             show_color_controls(ui, &mut self.color_mode, &model.toolpath);
         });
-        section(ui, "Rendering", |ui| {
+        section(ui, "Rendering", true, |ui| {
             segmented_picker(
                 ui,
                 &mut self.quality,
@@ -316,7 +321,7 @@ impl ViewerApp {
             );
             ui.checkbox(&mut self.camera.orthographic, "Orthographic projection");
         });
-        section(ui, "Light", |ui| {
+        section(ui, "Light", false, |ui| {
             ui.add_enabled_ui(self.quality != RenderQuality::Fast, |ui| {
                 slider_row(
                     ui,
@@ -343,16 +348,19 @@ impl ViewerApp {
                 .fit_bounds(model.toolpath.fit_min, model.toolpath.fit_max);
             self.light = LightAngles::default();
         }
-        ui.label(
-            weak_text(
-                "Drag: orbit · Right drag: pan · Scroll: zoom\n\
-                 1 / 3 / 7: front / right / top (Ctrl: opposite)\n\
-                 2 / 4 / 6 / 8: step orbit · 9: flip to opposite side\n\
-                 5: perspective / orthographic · 0: reset view\n\
-                 Space: play / pause layers · C: cycle colour mode",
-            )
-            .small(),
-        );
+        ui.add_space(SPACING_UNIT);
+        section(ui, "Shortcuts", false, |ui| {
+            ui.label(
+                weak_text(
+                    "Drag: orbit · Right drag: pan · Scroll: zoom\n\
+                     1 / 3 / 7: front / right / top (Ctrl: opposite)\n\
+                     2 / 4 / 6 / 8: step orbit · 9: flip to opposite side\n\
+                     5: perspective / orthographic · 0: reset view\n\
+                     Space: play / pause layers · C: cycle colour mode",
+                )
+                .small(),
+            );
+        });
     }
 
     fn show_viewport(&mut self, ui: &mut egui::Ui) {

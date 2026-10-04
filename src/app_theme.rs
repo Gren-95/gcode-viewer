@@ -55,15 +55,28 @@ pub fn viewport_frame() -> egui::Frame {
     egui::Frame::NONE.fill(VIEWPORT_FILL)
 }
 
-pub fn section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
-    ui.label(RichText::new(title.to_uppercase()).small().strong().color(TEXT_WEAK));
-    egui::Frame::NONE
-        .fill(CARD_FILL)
-        .corner_radius(CornerRadius::same(CARD_RADIUS))
-        .inner_margin(Margin::same(CARD_PADDING))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add_contents(ui);
+pub fn section(
+    ui: &mut egui::Ui,
+    title: &str,
+    default_open: bool,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let header = RichText::new(title.to_uppercase())
+        .small()
+        .strong()
+        .color(TEXT_WEAK);
+    egui::CollapsingHeader::new(header)
+        .id_salt(title)
+        .default_open(default_open)
+        .show_unindented(ui, |ui| {
+            egui::Frame::NONE
+                .fill(CARD_FILL)
+                .corner_radius(CornerRadius::same(CARD_RADIUS))
+                .inner_margin(Margin::same(CARD_PADDING))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    add_contents(ui);
+                });
         });
     ui.add_space(SPACING_UNIT);
 }
