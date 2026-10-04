@@ -84,7 +84,7 @@ impl ViewerApp {
             .get_mut::<ToolpathGpu>()
             .expect("toolpath gpu resources registered at startup")
             .upload_mesh(&render_state.device, &mesh, toolpath.min, toolpath.max);
-        self.camera.fit_bounds(toolpath.min, toolpath.max);
+        self.camera.fit_bounds(toolpath.fit_min, toolpath.fit_max);
         self.first_layer = 0;
         self.last_layer = toolpath.layer_count - 1;
         self.error_message = None;
@@ -192,7 +192,7 @@ impl ViewerApp {
             .clicked()
         {
             self.camera
-                .fit_bounds(model.toolpath.min, model.toolpath.max);
+                .fit_bounds(model.toolpath.fit_min, model.toolpath.fit_max);
             self.light = LightAngles::default();
         }
         ui.label(weak_text("Drag: orbit · Right drag: pan · Scroll: zoom").small());

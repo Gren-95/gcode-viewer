@@ -3,6 +3,7 @@ use glam::Vec3;
 const ARC_SEGMENT_LENGTH_MM: f32 = 0.5;
 const LAYER_Z_EPSILON: f32 = 1e-4;
 const MM_PER_INCH: f32 = 25.4;
+const FIT_TRIM_FRACTION: f32 = 0.005;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -24,6 +25,10 @@ pub struct Toolpath {
     pub layer_count: u32,
     pub min: Vec3,
     pub max: Vec3,
+    /// Bounds for framing the camera: X and Y exclude the outermost extrusion
+    /// points so a distant purge line does not shrink the model in view.
+    pub fit_min: Vec3,
+    pub fit_max: Vec3,
     pub filament_mm: f32,
 }
 
@@ -274,19 +279,33 @@ fn normalize_command(command: &str) -> String {
     }
 }
 
+fn trimmed_range(mut values: Vec<f32>) -> (f32, f32) {
+    let last = values.len() - 1;
+    let trim = (last as f32 * FIT_TRIM_FRACTION) as usize;
+    let low = *values.select_nth_unstable_by(trim, f32::total_cmp).1;
+    let high = *values.select_nth_unstable_by(last - trim, f32::total_cmp).1;
+    (low, high)
+}
+
 fn compute_bounds(toolpath: &mut Toolpath) {
-    let mut points = toolpath
+    let points: Vec<Vec3> = toolpath
         .segments
         .iter()
         .filter(|segment| segment.kind == MoveKind::Extrude)
         .map(|segment| segment.to)
-        .peekable();
-    let Some(first) = points.peek().copied() else {
+        .collect();
+    let Some(first) = points.first().copied() else {
         return;
     };
-    let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
+    let (min, max) = points
+        .iter()
+        .fold((first, first), |(min, max), p| (min.min(*p), max.max(*p)));
     toolpath.min = min;
     toolpath.max = max;
+    let (fit_min_x, fit_max_x) = trimmed_range(points.iter().map(|p| p.x).collect());
+    let (fit_min_y, fit_max_y) = trimmed_range(points.iter().map(|p| p.y).collect());
+    toolpath.fit_min = Vec3::new(fit_min_x, fit_min_y, min.z);
+    toolpath.fit_max = Vec3::new(fit_max_x, fit_max_y, max.z);
 }
 
 pub fn parse_gcode(source: &str) -> Toolpath {
@@ -367,6 +386,20 @@ mod tests {
         assert!(toolpath.segments.len() > 10);
         let end = toolpath.segments.last().unwrap().to;
         assert!((end.x).abs() < 1e-3 && (end.y - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn should_exclude_distant_purge_line_from_fit_bounds() {
+        let mut source = String::from("G1 X-50 Y-50 Z0.2\nG1 X-10 Y-50 E1\n");
+        for step in 0..1000 {
+            let x = 100.0 + (step % 40) as f32;
+            let y = 100.0 + (step / 40) as f32;
+            source.push_str(&format!("G1 X{x} Y{y} E{}\n", 2 + step));
+        }
+        let toolpath = parse_gcode(&source);
+        assert_eq!(toolpath.min.x, -10.0);
+        assert!(toolpath.fit_min.x >= 100.0 && toolpath.fit_min.y >= 100.0);
+        assert!(toolpath.fit_max.x <= 140.0);
     }
 
     #[test]
