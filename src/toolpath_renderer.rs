@@ -11,6 +11,36 @@ const TUBE_VERTICES_PER_INSTANCE: u32 = 18;
 const PLANE_VERTICES: u32 = 6;
 const LINE_VERTICES_PER_INSTANCE: u32 = 2;
 
+pub const MAX_LIGHT_ELEVATION_DEGREES: f32 = 89.0;
+pub const MIN_LIGHT_ELEVATION_DEGREES: f32 = 5.0;
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct LightAngles {
+    pub azimuth_degrees: f32,
+    pub elevation_degrees: f32,
+}
+
+impl Default for LightAngles {
+    fn default() -> Self {
+        Self {
+            azimuth_degrees: 215.0,
+            elevation_degrees: 53.0,
+        }
+    }
+}
+
+impl LightAngles {
+    fn direction(self) -> Vec3 {
+        let azimuth = self.azimuth_degrees.to_radians();
+        let elevation = self.elevation_degrees.to_radians();
+        Vec3::new(
+            elevation.cos() * azimuth.cos(),
+            elevation.cos() * azimuth.sin(),
+            elevation.sin(),
+        )
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenderQuality {
     Fast,
@@ -33,7 +63,6 @@ impl RenderQuality {
 const EXTRUDE_COLOR_LOW: [f32; 4] = [0.27, 0.52, 0.80, 1.0];
 const EXTRUDE_COLOR_HIGH: [f32; 4] = [0.96, 0.58, 0.28, 1.0];
 const TRAVEL_COLOR: [f32; 4] = [0.55, 0.58, 0.65, 0.30];
-const LIGHT_DIRECTION: Vec3 = Vec3::new(-0.5, -0.35, 0.8);
 const PLANE_HALF_EXTENT_FACTOR: f32 = 1.2;
 const SHADOW_FRUSTUM_FACTOR: f32 = 1.3;
 const PLANE_GAP_MM: f32 = 0.01;
@@ -55,11 +84,12 @@ struct Uniforms {
 struct Scene {
     extrude_instances: Option<wgpu::Buffer>,
     travel_vertices: Option<wgpu::Buffer>,
-    light_view_projection: Mat4,
+    center: Vec3,
+    radius: f32,
     plane: [f32; 4],
     plane_z: f32,
     layer_height: f32,
-    shadow_range: Option<Range<u32>>,
+    shadow_key: Option<(Range<u32>, LightAngles)>,
 }
 
 pub struct ToolpathGpu {
@@ -162,7 +192,8 @@ impl ToolpathGpu {
                 bytemuck::cast_slice(&mesh.travel.vertices),
                 mesh.travel.vertices.is_empty(),
             ),
-            light_view_projection: light_view_projection(center, radius),
+            center,
+            radius,
             plane: [
                 center.x - plane_half,
                 center.y - plane_half,
@@ -171,13 +202,12 @@ impl ToolpathGpu {
             ],
             plane_z: min.z - mesh.layer_height - PLANE_GAP_MM,
             layer_height: mesh.layer_height,
-            shadow_range: None,
+            shadow_key: None,
         });
     }
 }
 
-fn light_view_projection(center: Vec3, radius: f32) -> Mat4 {
-    let light = LIGHT_DIRECTION.normalize();
+fn light_view_projection(light: Vec3, center: Vec3, radius: f32) -> Mat4 {
     let eye = center + light * radius * 2.0;
     let view = Mat4::look_at_rh(eye, center, Vec3::Z);
     let half = radius * SHADOW_FRUSTUM_FACTOR;
@@ -432,20 +462,22 @@ pub struct ToolpathDraw {
     pub view_projection: Mat4,
     pub camera_position: Vec3,
     pub quality: RenderQuality,
+    pub light: LightAngles,
     pub extrude_range: Range<u32>,
     pub travel_range: Option<Range<u32>>,
 }
 
 impl ToolpathDraw {
     fn uniforms(&self, scene: &Scene) -> Uniforms {
+        let light_direction = self.light.direction();
         Uniforms {
             view_projection: self.view_projection.to_cols_array_2d(),
-            light_view_projection: scene.light_view_projection.to_cols_array_2d(),
+            light_view_projection: light_view_projection(light_direction, scene.center, scene.radius)
+                .to_cols_array_2d(),
             color_low: EXTRUDE_COLOR_LOW,
             color_high: EXTRUDE_COLOR_HIGH,
             travel_color: TRAVEL_COLOR,
-            light_direction: LIGHT_DIRECTION
-                .normalize()
+            light_direction: light_direction
                 .extend(f32::from(self.quality == RenderQuality::Shadowed))
                 .to_array(),
             camera_position: self.camera_position.extend(1.0).to_array(),
@@ -507,10 +539,10 @@ impl egui_wgpu::CallbackTrait for ToolpathDraw {
         };
         queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&self.uniforms(&scene)));
         let needs_shadow_pass = self.quality == RenderQuality::Shadowed
-            && scene.shadow_range.as_ref() != Some(&self.extrude_range);
+            && scene.shadow_key.as_ref() != Some(&(self.extrude_range.clone(), self.light));
         if needs_shadow_pass {
             self.render_shadow_pass(gpu, &scene, egui_encoder);
-            scene.shadow_range = Some(self.extrude_range.clone());
+            scene.shadow_key = Some((self.extrude_range.clone(), self.light));
         }
         gpu.scene = Some(scene);
         Vec::new()

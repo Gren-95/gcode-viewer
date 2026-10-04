@@ -1,7 +1,10 @@
 use crate::orbit_camera::OrbitCamera;
 use crate::parse_gcode::{Toolpath, parse_gcode};
 use crate::toolpath_mesh::{ToolpathMesh, build_toolpath_mesh};
-use crate::toolpath_renderer::{RenderQuality, ToolpathDraw, ToolpathGpu};
+use crate::toolpath_renderer::{
+    LightAngles, MAX_LIGHT_ELEVATION_DEGREES, MIN_LIGHT_ELEVATION_DEGREES, RenderQuality,
+    ToolpathDraw, ToolpathGpu,
+};
 use eframe::egui::{self, Color32, RichText};
 use eframe::egui_wgpu;
 use std::path::{Path, PathBuf};
@@ -21,6 +24,7 @@ pub struct ViewerApp {
     last_layer: u32,
     show_travel: bool,
     quality: RenderQuality,
+    light: LightAngles,
     error_message: Option<String>,
 }
 
@@ -43,6 +47,7 @@ impl ViewerApp {
             last_layer: 0,
             show_travel: false,
             quality: RenderQuality::Shadowed,
+            light: LightAngles::default(),
             error_message: None,
         };
         if let Some(path) = initial_file {
@@ -134,9 +139,25 @@ impl ViewerApp {
         for quality in RenderQuality::ALL {
             ui.radio_value(&mut self.quality, quality, quality.label());
         }
-        if ui.button("Reset camera").clicked() {
+        ui.add_enabled_ui(self.quality != RenderQuality::Fast, |ui| {
+            ui.add(
+                egui::Slider::new(&mut self.light.azimuth_degrees, 0.0..=360.0)
+                    .text("light direction")
+                    .suffix("°"),
+            );
+            ui.add(
+                egui::Slider::new(
+                    &mut self.light.elevation_degrees,
+                    MIN_LIGHT_ELEVATION_DEGREES..=MAX_LIGHT_ELEVATION_DEGREES,
+                )
+                .text("light height")
+                .suffix("°"),
+            );
+        });
+        if ui.button("Reset camera and light").clicked() {
             self.camera
                 .fit_bounds(model.toolpath.min, model.toolpath.max);
+            self.light = LightAngles::default();
         }
         ui.separator();
         ui.small("Left drag: orbit\nRight/middle drag: pan\nScroll: zoom");
@@ -164,6 +185,7 @@ impl ViewerApp {
                 .view_projection(rect.width() / rect.height().max(1.0)),
             camera_position: self.camera.eye(),
             quality: self.quality,
+            light: self.light,
             extrude_range: model
                 .mesh
                 .extrude
