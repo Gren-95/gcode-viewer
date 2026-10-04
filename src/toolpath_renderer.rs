@@ -51,11 +51,19 @@ pub enum RenderQuality {
 impl RenderQuality {
     pub const ALL: [RenderQuality; 3] = [Self::Fast, Self::Shaded, Self::Shadowed];
 
-    pub fn label(self) -> &'static str {
+    pub fn short_label(self) -> &'static str {
         match self {
-            Self::Fast => "Fast (flat lines)",
+            Self::Fast => "Fast",
             Self::Shaded => "Shaded",
-            Self::Shadowed => "Shaded + shadows",
+            Self::Shadowed => "Shadows",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Fast => "Flat lines, no lighting. Best for large models.",
+            Self::Shaded => "Lit tubes without shadows.",
+            Self::Shadowed => "Lit tubes with shadows. Slowest.",
         }
     }
 }

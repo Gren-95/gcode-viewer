@@ -1,3 +1,4 @@
+mod app_theme;
 mod orbit_camera;
 mod parse_gcode;
 mod toolpath_mesh;

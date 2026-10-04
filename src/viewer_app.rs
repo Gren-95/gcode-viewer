@@ -1,3 +1,7 @@
+use crate::app_theme::{
+    ACCENT, PANEL_WIDTH, apply_app_theme, heading_text, panel_frame, section, slider_row,
+    value_row, viewport_frame, weak_text,
+};
 use crate::orbit_camera::OrbitCamera;
 use crate::parse_gcode::{Toolpath, parse_gcode};
 use crate::toolpath_mesh::{ToolpathMesh, build_toolpath_mesh};
@@ -9,7 +13,9 @@ use eframe::egui::{self, Color32, RichText};
 use eframe::egui_wgpu;
 use std::path::{Path, PathBuf};
 
-const BACKGROUND_COLOR: Color32 = Color32::from_rgb(19, 21, 25);
+const OPEN_BUTTON_HEIGHT: f32 = 36.0;
+const RESET_BUTTON_HEIGHT: f32 = 32.0;
+const QUALITY_BUTTON_HEIGHT: f32 = 30.0;
 
 struct LoadedModel {
     file_name: String,
@@ -30,6 +36,7 @@ pub struct ViewerApp {
 
 impl ViewerApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
+        apply_app_theme(&cc.egui_ctx);
         let render_state = cc
             .wgpu_render_state
             .as_ref()
@@ -108,59 +115,87 @@ impl ViewerApp {
     }
 
     fn show_side_panel(&mut self, ui: &mut egui::Ui, render_state: &egui_wgpu::RenderState) {
-        if ui.button("Open file…").clicked() {
+        let open_label = RichText::new("Open file…").strong().color(Color32::BLACK);
+        let open_button = egui::Button::new(open_label).fill(ACCENT);
+        if ui
+            .add_sized([ui.available_width(), OPEN_BUTTON_HEIGHT], open_button)
+            .clicked()
+        {
             self.pick_file(render_state);
         }
         if let Some(message) = &self.error_message {
             ui.colored_label(Color32::LIGHT_RED, message);
         }
         let Some(model) = &self.model else {
-            ui.label("Open or drop a .gcode file.");
+            ui.label(weak_text("Open or drop a .gcode file."));
             return;
         };
-        ui.separator();
-        ui.label(RichText::new(&model.file_name).strong());
+        let layer_count = model.toolpath.layer_count;
         let size = model.toolpath.max - model.toolpath.min;
-        ui.label(format!("Layers: {}", model.toolpath.layer_count));
-        ui.label(format!(
-            "Size: {:.1} × {:.1} × {:.1} mm",
-            size.x, size.y, size.z
-        ));
-        ui.label(format!("Filament: {:.2} m", model.toolpath.filament_mm / 1000.0));
-        ui.separator();
-        let top_layer = model.toolpath.layer_count - 1;
-        ui.label("Layer range");
-        ui.add(egui::Slider::new(&mut self.last_layer, 0..=top_layer).text("top"));
-        ui.add(egui::Slider::new(&mut self.first_layer, 0..=top_layer).text("bottom"));
-        self.first_layer = self.first_layer.min(self.last_layer);
-        ui.checkbox(&mut self.show_travel, "Show travel moves");
-        ui.separator();
-        ui.label("Rendering");
-        for quality in RenderQuality::ALL {
-            ui.radio_value(&mut self.quality, quality, quality.label());
-        }
-        ui.add_enabled_ui(self.quality != RenderQuality::Fast, |ui| {
-            ui.add(
-                egui::Slider::new(&mut self.light.azimuth_degrees, 0.0..=360.0)
-                    .text("light direction")
-                    .suffix("°"),
+        section(ui, "File", |ui| {
+            ui.label(heading_text(&model.file_name));
+            value_row(ui, "Layers", layer_count.to_string());
+            value_row(
+                ui,
+                "Size",
+                format!("{:.1} × {:.1} × {:.1} mm", size.x, size.y, size.z),
             );
-            ui.add(
-                egui::Slider::new(
-                    &mut self.light.elevation_degrees,
-                    MIN_LIGHT_ELEVATION_DEGREES..=MAX_LIGHT_ELEVATION_DEGREES,
-                )
-                .text("light height")
-                .suffix("°"),
+            value_row(
+                ui,
+                "Filament",
+                format!("{:.2} m", model.toolpath.filament_mm / 1000.0),
             );
         });
-        if ui.button("Reset camera and light").clicked() {
+        section(ui, "Layers", |ui| {
+            let top_layer = layer_count - 1;
+            slider_row(
+                ui,
+                "Top",
+                format!("{} / {}", self.last_layer + 1, layer_count),
+                &mut self.last_layer,
+                0..=top_layer,
+            );
+            slider_row(
+                ui,
+                "Bottom",
+                (self.first_layer + 1).to_string(),
+                &mut self.first_layer,
+                0..=top_layer,
+            );
+            self.first_layer = self.first_layer.min(self.last_layer);
+            ui.checkbox(&mut self.show_travel, "Show travel moves");
+        });
+        section(ui, "Rendering", |ui| {
+            show_quality_picker(ui, &mut self.quality);
+        });
+        section(ui, "Light", |ui| {
+            ui.add_enabled_ui(self.quality != RenderQuality::Fast, |ui| {
+                slider_row(
+                    ui,
+                    "Direction",
+                    format!("{:.0}°", self.light.azimuth_degrees),
+                    &mut self.light.azimuth_degrees,
+                    0.0..=360.0,
+                );
+                slider_row(
+                    ui,
+                    "Height",
+                    format!("{:.0}°", self.light.elevation_degrees),
+                    &mut self.light.elevation_degrees,
+                    MIN_LIGHT_ELEVATION_DEGREES..=MAX_LIGHT_ELEVATION_DEGREES,
+                );
+            });
+        });
+        let reset_button = egui::Button::new("Reset camera and light");
+        if ui
+            .add_sized([ui.available_width(), RESET_BUTTON_HEIGHT], reset_button)
+            .clicked()
+        {
             self.camera
                 .fit_bounds(model.toolpath.min, model.toolpath.max);
             self.light = LightAngles::default();
         }
-        ui.separator();
-        ui.small("Left drag: orbit\nRight/middle drag: pan\nScroll: zoom");
+        ui.label(weak_text("Drag: orbit · Right drag: pan · Scroll: zoom").small());
     }
 
     fn show_viewport(&mut self, ui: &mut egui::Ui) {
@@ -211,9 +246,32 @@ impl eframe::App for ViewerApp {
         self.handle_dropped_files(ui.ctx(), &render_state);
         egui::Panel::left("controls")
             .resizable(false)
-            .show(ui, |ui| self.show_side_panel(ui, &render_state));
+            .exact_size(PANEL_WIDTH)
+            .frame(panel_frame())
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.show_side_panel(ui, &render_state));
+            });
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(BACKGROUND_COLOR))
+            .frame(viewport_frame())
             .show(ui, |ui| self.show_viewport(ui));
     }
+}
+
+fn show_quality_picker(ui: &mut egui::Ui, quality: &mut RenderQuality) {
+    let spacing = ui.spacing().item_spacing.x;
+    let count = RenderQuality::ALL.len() as f32;
+    let button_width = (ui.available_width() - spacing * (count - 1.0)) / count;
+    ui.horizontal(|ui| {
+        for option in RenderQuality::ALL {
+            let button = egui::Button::selectable(*quality == option, option.short_label());
+            let response = ui
+                .add_sized([button_width, QUALITY_BUTTON_HEIGHT], button)
+                .on_hover_text(option.description());
+            if response.clicked() {
+                *quality = option;
+            }
+        }
+    });
 }
