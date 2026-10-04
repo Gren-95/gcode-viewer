@@ -7,6 +7,8 @@ A standalone 3D G-code viewer for Linux, written in Rust with egui and wgpu. Ope
 ## Features
 
 - 3D toolpath with orbit, pan and zoom camera
+- Navigation cube: click a face, edge or corner to snap to that view
+- CAD style number key views and an orthographic projection option
 - Layer range sliders (top and bottom layer)
 - Optional travel move display
 - Three render modes: Fast (flat lines, best for large models), Shaded, and Shaded with shadows
@@ -57,6 +59,14 @@ Thumbnails only appear for files that contain an embedded preview image (PrusaSl
 | Left drag | Orbit |
 | Right or middle drag | Pan |
 | Scroll | Zoom |
+| Navigation cube | Click a face, edge or corner to snap to that view |
+| `1` / `3` / `7` | Front / right / top view (hold Ctrl for back / left / bottom) |
+| `2` / `4` / `6` / `8` | Step orbit by 15 degrees |
+| `9` | Flip to the opposite side |
+| `5` | Toggle perspective and orthographic projection |
+| `0` | Reset the view |
+
+The number keys work on both the top row and the numpad.
 
 ## Limitations
 

@@ -2,6 +2,7 @@ use crate::app_theme::{
     ACCENT, PANEL_WIDTH, apply_app_theme, heading_text, panel_frame, section, slider_row,
     value_row, viewport_frame, weak_text,
 };
+use crate::nav_cube::{nav_cube_rect, show_nav_cube};
 use crate::orbit_camera::OrbitCamera;
 use crate::parse_gcode::{Toolpath, parse_gcode};
 use crate::toolpath_mesh::{ToolpathMesh, build_toolpath_mesh};
@@ -9,13 +10,27 @@ use crate::toolpath_renderer::{
     LightAngles, MAX_LIGHT_ELEVATION_DEGREES, MIN_LIGHT_ELEVATION_DEGREES, RenderQuality,
     ToolpathDraw, ToolpathGpu,
 };
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, Key, RichText};
+use glam::Vec3;
 use eframe::egui_wgpu;
 use std::path::{Path, PathBuf};
 
 const OPEN_BUTTON_HEIGHT: f32 = 36.0;
 const RESET_BUTTON_HEIGHT: f32 = 32.0;
 const QUALITY_BUTTON_HEIGHT: f32 = 30.0;
+const ORBIT_STEP_RADIANS: f32 = std::f32::consts::PI / 12.0;
+const NUMBER_KEYS: [(Key, u8); 10] = [
+    (Key::Num0, 0),
+    (Key::Num1, 1),
+    (Key::Num2, 2),
+    (Key::Num3, 3),
+    (Key::Num4, 4),
+    (Key::Num5, 5),
+    (Key::Num6, 6),
+    (Key::Num7, 7),
+    (Key::Num8, 8),
+    (Key::Num9, 9),
+];
 
 struct LoadedModel {
     file_name: String,
@@ -114,6 +129,45 @@ impl ViewerApp {
         }
     }
 
+    fn handle_view_keys(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let (digits, ctrl) = ctx.input(|input| {
+            let digits: Vec<u8> = NUMBER_KEYS
+                .iter()
+                .filter(|(key, _)| input.key_pressed(*key))
+                .map(|(_, digit)| *digit)
+                .collect();
+            (digits, input.modifiers.ctrl)
+        });
+        for digit in digits {
+            self.apply_view_key(digit, ctrl);
+        }
+    }
+
+    fn apply_view_key(&mut self, digit: u8, opposite: bool) {
+        let side = |direction: Vec3| if opposite { -direction } else { direction };
+        match digit {
+            0 => {
+                if let Some(model) = &self.model {
+                    self.camera
+                        .fit_bounds(model.toolpath.fit_min, model.toolpath.fit_max);
+                }
+            }
+            1 => self.camera.snap_to_direction(side(Vec3::NEG_Y)),
+            2 => self.camera.step_orbit(0.0, ORBIT_STEP_RADIANS),
+            3 => self.camera.snap_to_direction(side(Vec3::X)),
+            4 => self.camera.step_orbit(ORBIT_STEP_RADIANS, 0.0),
+            5 => self.camera.orthographic = !self.camera.orthographic,
+            6 => self.camera.step_orbit(-ORBIT_STEP_RADIANS, 0.0),
+            7 => self.camera.snap_to_direction(side(Vec3::Z)),
+            8 => self.camera.step_orbit(0.0, -ORBIT_STEP_RADIANS),
+            9 => self.camera.snap_to_opposite(),
+            _ => {}
+        }
+    }
+
     fn show_side_panel(&mut self, ui: &mut egui::Ui, render_state: &egui_wgpu::RenderState) {
         let open_label = RichText::new("Open file…").strong().color(Color32::BLACK);
         let open_button = egui::Button::new(open_label).fill(ACCENT);
@@ -167,6 +221,7 @@ impl ViewerApp {
         });
         section(ui, "Rendering", |ui| {
             show_quality_picker(ui, &mut self.quality);
+            ui.checkbox(&mut self.camera.orthographic, "Orthographic projection");
         });
         section(ui, "Light", |ui| {
             ui.add_enabled_ui(self.quality != RenderQuality::Fast, |ui| {
@@ -195,22 +250,35 @@ impl ViewerApp {
                 .fit_bounds(model.toolpath.fit_min, model.toolpath.fit_max);
             self.light = LightAngles::default();
         }
-        ui.label(weak_text("Drag: orbit · Right drag: pan · Scroll: zoom").small());
+        ui.label(
+            weak_text(
+                "Drag: orbit · Right drag: pan · Scroll: zoom\n\
+                 1 / 3 / 7: front / right / top (Ctrl: opposite)\n\
+                 2 / 4 / 6 / 8: step orbit · 9: flip to opposite side\n\
+                 5: perspective / orthographic · 0: reset view",
+            )
+            .small(),
+        );
     }
 
     fn show_viewport(&mut self, ui: &mut egui::Ui) {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         let delta = glam::Vec2::new(response.drag_delta().x, response.drag_delta().y);
-        if response.dragged_by(egui::PointerButton::Primary) {
+        let cube_area = nav_cube_rect(rect);
+        let pressed_on_cube = ui
+            .input(|input| input.pointer.press_origin())
+            .is_some_and(|origin| cube_area.contains(origin));
+        if response.dragged_by(egui::PointerButton::Primary) && !pressed_on_cube {
             self.camera.orbit(delta);
         }
-        if response.dragged_by(egui::PointerButton::Secondary)
-            || response.dragged_by(egui::PointerButton::Middle)
+        if (response.dragged_by(egui::PointerButton::Secondary)
+            || response.dragged_by(egui::PointerButton::Middle))
+            && !pressed_on_cube
         {
             self.camera.pan(delta, rect.height());
         }
-        if response.hovered() {
+        if response.hovered() && !ui.rect_contains_pointer(cube_area) {
             self.camera.zoom(ui.input(|input| input.smooth_scroll_delta.y));
         }
         let Some(model) = &self.model else { return };
@@ -234,6 +302,9 @@ impl ViewerApp {
         };
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, draw));
+        if let Some(direction) = show_nav_cube(ui, rect, &self.camera) {
+            self.camera.snap_to_direction(direction);
+        }
     }
 }
 
@@ -244,6 +315,11 @@ impl eframe::App for ViewerApp {
             .expect("wgpu backend is required")
             .clone();
         self.handle_dropped_files(ui.ctx(), &render_state);
+        self.handle_view_keys(ui.ctx());
+        let delta_seconds = ui.input(|input| input.stable_dt);
+        if self.camera.animate(delta_seconds) {
+            ui.ctx().request_repaint();
+        }
         egui::Panel::left("controls")
             .resizable(false)
             .exact_size(PANEL_WIDTH)
