@@ -1,3 +1,4 @@
+use eframe::egui::collapsing_header::{CollapsingState, paint_default_icon};
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke};
 
 pub const VIEWPORT_FILL: Color32 = Color32::from_rgb(19, 21, 25);
@@ -7,6 +8,11 @@ pub const SPACING_UNIT: f32 = 8.0;
 
 const PANEL_FILL: Color32 = Color32::from_rgb(25, 27, 32);
 const CARD_FILL: Color32 = Color32::from_rgb(33, 36, 43);
+const HEADER_FILL: Color32 = Color32::from_rgb(41, 45, 54);
+const HEADER_HOVER_FILL: Color32 = Color32::from_rgb(50, 55, 66);
+const HEADER_HEIGHT: f32 = 32.0;
+const HEADER_PADDING: f32 = 10.0;
+const ICON_SIZE: f32 = 12.0;
 const WIDGET_FILL: Color32 = Color32::from_rgb(47, 51, 61);
 const WIDGET_HOVER_FILL: Color32 = Color32::from_rgb(62, 67, 79);
 const WIDGET_ACTIVE_FILL: Color32 = Color32::from_rgb(74, 80, 94);
@@ -61,24 +67,63 @@ pub fn section(
     default_open: bool,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    let header = RichText::new(title.to_uppercase())
-        .small()
-        .strong()
-        .color(TEXT_WEAK);
-    egui::CollapsingHeader::new(header)
-        .id_salt(title)
-        .default_open(default_open)
-        .show_unindented(ui, |ui| {
-            egui::Frame::NONE
-                .fill(CARD_FILL)
-                .corner_radius(CornerRadius::same(CARD_RADIUS))
-                .inner_margin(Margin::same(CARD_PADDING))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    add_contents(ui);
-                });
+    let id = ui.make_persistent_id(("section", title));
+    let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    egui::Frame::NONE
+        .fill(CARD_FILL)
+        .corner_radius(CornerRadius::same(CARD_RADIUS))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if section_header(ui, title, state.openness(ui.ctx())).clicked() {
+                state.toggle(ui);
+            }
+            ui.spacing_mut().item_spacing.y = SPACING_UNIT;
+            state.show_body_unindented(ui, |ui| {
+                egui::Frame::NONE
+                    .inner_margin(Margin::same(CARD_PADDING))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        add_contents(ui);
+                    });
+            });
         });
+    state.store(ui.ctx());
     ui.add_space(SPACING_UNIT);
+}
+
+fn section_header(ui: &mut egui::Ui, title: &str, openness: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), HEADER_HEIGHT),
+        egui::Sense::click(),
+    );
+    let fill = if response.hovered() {
+        HEADER_HOVER_FILL
+    } else {
+        HEADER_FILL
+    };
+    let bottom_radius = if openness > 0.0 { 0 } else { CARD_RADIUS };
+    let rounding = CornerRadius {
+        nw: CARD_RADIUS,
+        ne: CARD_RADIUS,
+        sw: bottom_radius,
+        se: bottom_radius,
+    };
+    ui.painter().rect_filled(rect, rounding, fill);
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + HEADER_PADDING + ICON_SIZE * 0.5, rect.center().y),
+        egui::vec2(ICON_SIZE, ICON_SIZE),
+    );
+    let icon_response = ui.interact(icon_rect, response.id.with("icon"), egui::Sense::hover());
+    paint_default_icon(ui, openness, &icon_response);
+    ui.painter().text(
+        egui::pos2(icon_rect.right() + HEADER_PADDING, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title.to_uppercase(),
+        egui::FontId::proportional(11.0),
+        TEXT_STRONG,
+    );
+    response
 }
 
 pub fn heading_text(text: &str) -> RichText {
