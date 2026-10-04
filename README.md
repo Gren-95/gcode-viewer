@@ -40,13 +40,13 @@ This builds the project and installs:
 
 ### Thumbnails
 
-GNOME runs thumbnailers in a sandbox that can only see `/usr`, so the thumbnailer binary has to be installed system wide. The install script prints the exact command if it is missing:
-
 ```bash
-sudo install -Dm755 target/release/gcode-thumbnailer /usr/local/bin/gcode-thumbnailer
+./scripts/install.sh --all
 ```
 
-Thumbnails only appear for files that contain an embedded preview image (PrusaSlicer, OrcaSlicer and ElegooSlicer all write one). Restart your file manager after installing so it picks up the new thumbnailer.
+`--all` also installs the thumbnailer. GNOME runs thumbnailers in a sandbox that can only see `/usr`, so the `gcode-thumbnailer` binary is installed to `/usr/local/bin` with `sudo`, and you will be prompted for your password. Restart your file manager afterwards (`nautilus -q`) so it picks up the new thumbnailer.
+
+Thumbnails only appear for files that contain an embedded preview image (PrusaSlicer, OrcaSlicer and ElegooSlicer all write one).
 
 ## Controls
 
