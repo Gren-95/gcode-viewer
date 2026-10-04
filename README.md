@@ -9,7 +9,9 @@ A standalone 3D G-code viewer for Linux, written in Rust with egui and wgpu. Ope
 - 3D toolpath with orbit, pan and zoom camera
 - Navigation cube: drag to orbit, or click a face, edge or corner to snap to that view
 - CAD style number key views and an orthographic projection option
-- Layer range sliders (top and bottom layer)
+- Layer range sliders (top and bottom layer), with a play button that animates the print layer by layer
+- Colour by height, speed, layer or feature type (from `;TYPE:` and `; FEATURE:` comments)
+- File statistics: print time (when the slicer reports it), extrusion and travel move counts, travel distance
 - Optional travel move display
 - Three render modes: Fast (flat lines, best for large models), Shaded, and Shaded with shadows
 - Adjustable light direction and height
@@ -65,6 +67,8 @@ Thumbnails only appear for files that contain an embedded preview image (PrusaSl
 | `9` | Flip to the opposite side |
 | `5` | Toggle perspective and orthographic projection |
 | `0` | Reset the view |
+| `Space` | Play or pause the layer animation |
+| `C` | Cycle the colour mode |
 
 The number keys work on both the top row and the numpad.
 

@@ -2,22 +2,26 @@ use crate::app_theme::{
     ACCENT, PANEL_WIDTH, apply_app_theme, heading_text, panel_frame, section, slider_row,
     value_row, viewport_frame, weak_text,
 };
+use crate::color_scheme::{ColorMode, FEATURE_COLORS};
+use crate::layer_player::LayerPlayer;
 use crate::nav_cube::{NavCubeAction, nav_cube_rect, show_nav_cube};
 use crate::orbit_camera::OrbitCamera;
 use crate::parse_gcode::{Toolpath, parse_gcode};
+use crate::sidebar_widgets::{
+    SegmentOption, color_legend, format_count, format_duration, gradient_bar, segmented_picker,
+};
 use crate::toolpath_mesh::{ToolpathMesh, build_toolpath_mesh};
 use crate::toolpath_renderer::{
     LightAngles, MAX_LIGHT_ELEVATION_DEGREES, MIN_LIGHT_ELEVATION_DEGREES, RenderQuality,
     ToolpathDraw, ToolpathGpu,
 };
 use eframe::egui::{self, Color32, Key, RichText};
-use glam::Vec3;
 use eframe::egui_wgpu;
+use glam::Vec3;
 use std::path::{Path, PathBuf};
 
 const OPEN_BUTTON_HEIGHT: f32 = 36.0;
 const RESET_BUTTON_HEIGHT: f32 = 32.0;
-const QUALITY_BUTTON_HEIGHT: f32 = 30.0;
 const ORBIT_STEP_RADIANS: f32 = std::f32::consts::PI / 12.0;
 const NUMBER_KEYS: [(Key, u8); 10] = [
     (Key::Num0, 0),
@@ -45,7 +49,9 @@ pub struct ViewerApp {
     last_layer: u32,
     show_travel: bool,
     quality: RenderQuality,
+    color_mode: ColorMode,
     light: LightAngles,
+    player: LayerPlayer,
     error_message: Option<String>,
 }
 
@@ -69,7 +75,9 @@ impl ViewerApp {
             last_layer: 0,
             show_travel: false,
             quality: RenderQuality::Shadowed,
+            color_mode: ColorMode::Height,
             light: LightAngles::default(),
+            player: LayerPlayer::new(),
             error_message: None,
         };
         if let Some(path) = initial_file {
@@ -103,6 +111,10 @@ impl ViewerApp {
         self.first_layer = 0;
         self.last_layer = toolpath.layer_count - 1;
         self.error_message = None;
+        self.player.stop();
+        if toolpath.feature_names.is_empty() && self.color_mode == ColorMode::Feature {
+            self.color_mode = ColorMode::Height;
+        }
         self.model = Some(LoadedModel {
             file_name: path
                 .file_name()
@@ -143,6 +155,18 @@ impl ViewerApp {
         });
         for digit in digits {
             self.apply_view_key(digit, ctrl);
+        }
+        if ctx.input(|input| input.key_pressed(Key::C))
+            && let Some(model) = &self.model
+        {
+            let has_features = !model.toolpath.feature_names.is_empty();
+            self.color_mode = self.color_mode.next(has_features);
+        }
+        let space_pressed = ctx.input(|input| input.key_pressed(Key::Space));
+        if space_pressed && let Some(model) = &self.model {
+            let top_layer = model.toolpath.layer_count - 1;
+            self.player
+                .toggle(self.first_layer, &mut self.last_layer, top_layer);
         }
     }
 
@@ -199,28 +223,65 @@ impl ViewerApp {
                 "Filament",
                 format!("{:.2} m", model.toolpath.filament_mm / 1000.0),
             );
+            if let Some(seconds) = model.toolpath.estimated_seconds {
+                value_row(ui, "Print time", format_duration(seconds));
+            }
+            value_row(
+                ui,
+                "Extrusion moves",
+                format_count(model.toolpath.extrude_move_count),
+            );
+            value_row(
+                ui,
+                "Travel moves",
+                format_count(model.toolpath.travel_move_count),
+            );
+            value_row(
+                ui,
+                "Travel distance",
+                format!("{:.2} m", model.toolpath.travel_distance_mm / 1000.0),
+            );
         });
         section(ui, "Layers", |ui| {
             let top_layer = layer_count - 1;
-            slider_row(
+            let top_changed = slider_row(
                 ui,
                 "Top",
                 format!("{} / {}", self.last_layer + 1, layer_count),
                 &mut self.last_layer,
                 0..=top_layer,
-            );
-            slider_row(
+            )
+            .changed();
+            let bottom_changed = slider_row(
                 ui,
                 "Bottom",
                 (self.first_layer + 1).to_string(),
                 &mut self.first_layer,
                 0..=top_layer,
-            );
+            )
+            .changed();
+            if top_changed || bottom_changed {
+                self.player.stop();
+            }
             self.first_layer = self.first_layer.min(self.last_layer);
             ui.checkbox(&mut self.show_travel, "Show travel moves");
+            self.player
+                .show_controls(ui, self.first_layer, &mut self.last_layer, top_layer);
+        });
+        section(ui, "Colour", |ui| {
+            show_color_controls(ui, &mut self.color_mode, &model.toolpath);
         });
         section(ui, "Rendering", |ui| {
-            show_quality_picker(ui, &mut self.quality);
+            segmented_picker(
+                ui,
+                &mut self.quality,
+                &RenderQuality::ALL.map(|quality| SegmentOption {
+                    value: quality,
+                    label: quality.short_label(),
+                    tooltip: quality.description(),
+                    enabled: true,
+                }),
+            );
             ui.checkbox(&mut self.camera.orthographic, "Orthographic projection");
         });
         section(ui, "Light", |ui| {
@@ -255,7 +316,8 @@ impl ViewerApp {
                 "Drag: orbit · Right drag: pan · Scroll: zoom\n\
                  1 / 3 / 7: front / right / top (Ctrl: opposite)\n\
                  2 / 4 / 6 / 8: step orbit · 9: flip to opposite side\n\
-                 5: perspective / orthographic · 0: reset view",
+                 5: perspective / orthographic · 0: reset view\n\
+                 Space: play / pause layers · C: cycle colour mode",
             )
             .small(),
         );
@@ -288,6 +350,7 @@ impl ViewerApp {
                 .view_projection(rect.width() / rect.height().max(1.0)),
             camera_position: self.camera.eye(),
             quality: self.quality,
+            color_mode: self.color_mode,
             light: self.light,
             extrude_range: model
                 .mesh
@@ -322,6 +385,15 @@ impl eframe::App for ViewerApp {
         if self.camera.animate(delta_seconds) {
             ui.ctx().request_repaint();
         }
+        if let Some(model) = &self.model {
+            let top_layer = model.toolpath.layer_count - 1;
+            let still_playing =
+                self.player
+                    .advance(delta_seconds, self.first_layer, &mut self.last_layer, top_layer);
+            if still_playing {
+                ui.ctx().request_repaint();
+            }
+        }
         egui::Panel::left("controls")
             .resizable(false)
             .exact_size(PANEL_WIDTH)
@@ -337,19 +409,45 @@ impl eframe::App for ViewerApp {
     }
 }
 
-fn show_quality_picker(ui: &mut egui::Ui, quality: &mut RenderQuality) {
-    let spacing = ui.spacing().item_spacing.x;
-    let count = RenderQuality::ALL.len() as f32;
-    let button_width = (ui.available_width() - spacing * (count - 1.0)) / count;
-    ui.horizontal(|ui| {
-        for option in RenderQuality::ALL {
-            let button = egui::Button::selectable(*quality == option, option.short_label());
-            let response = ui
-                .add_sized([button_width, QUALITY_BUTTON_HEIGHT], button)
-                .on_hover_text(option.description());
-            if response.clicked() {
-                *quality = option;
-            }
+fn show_color_controls(ui: &mut egui::Ui, color_mode: &mut ColorMode, toolpath: &Toolpath) {
+    let has_features = !toolpath.feature_names.is_empty();
+    segmented_picker(
+        ui,
+        color_mode,
+        &ColorMode::ALL.map(|mode| SegmentOption {
+            value: mode,
+            label: mode.label(),
+            tooltip: mode.description(),
+            enabled: mode != ColorMode::Feature || has_features,
+        }),
+    );
+    match *color_mode {
+        ColorMode::Height => gradient_bar(
+            ui,
+            &color_mode.palette(),
+            &format!("{:.1} mm", toolpath.min.z),
+            &format!("{:.1} mm", toolpath.max.z),
+        ),
+        ColorMode::Speed => gradient_bar(
+            ui,
+            &color_mode.palette(),
+            &format!("{:.0} mm/s", toolpath.speed_min),
+            &format!("{:.0} mm/s", toolpath.speed_max),
+        ),
+        ColorMode::Layer => gradient_bar(
+            ui,
+            &color_mode.palette(),
+            "1",
+            &toolpath.layer_count.to_string(),
+        ),
+        ColorMode::Feature => {
+            let entries: Vec<(&str, [f32; 4])> = toolpath
+                .feature_names
+                .iter()
+                .zip(FEATURE_COLORS)
+                .map(|(name, color)| (name.as_str(), color))
+                .collect();
+            color_legend(ui, &entries);
         }
-    });
+    }
 }

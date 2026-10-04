@@ -4,6 +4,9 @@ const ARC_SEGMENT_LENGTH_MM: f32 = 0.5;
 const LAYER_Z_EPSILON: f32 = 1e-4;
 const MM_PER_INCH: f32 = 25.4;
 const FIT_TRIM_FRACTION: f32 = 0.005;
+const SECONDS_PER_MINUTE: f32 = 60.0;
+/// Features beyond this many distinct names share the last colour bucket.
+pub const MAX_FEATURES: usize = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -17,6 +20,10 @@ pub struct Segment {
     pub to: Vec3,
     pub kind: MoveKind,
     pub layer: u32,
+    /// Feed rate in mm/s, 0 until the first `F` word.
+    pub speed: f32,
+    /// Index into `Toolpath::feature_names`, 0 when the file has no feature comments.
+    pub feature: u8,
 }
 
 #[derive(Default, Debug)]
@@ -30,6 +37,15 @@ pub struct Toolpath {
     pub fit_min: Vec3,
     pub fit_max: Vec3,
     pub filament_mm: f32,
+    /// Distinct names from `;TYPE:` or `; FEATURE:` comments, in order of first use.
+    pub feature_names: Vec<String>,
+    pub speed_min: f32,
+    pub speed_max: f32,
+    /// Print time reported by the slicer in a comment, if any.
+    pub estimated_seconds: Option<u32>,
+    pub extrude_move_count: usize,
+    pub travel_move_count: usize,
+    pub travel_distance_mm: f32,
 }
 
 struct ParserState {
@@ -38,6 +54,8 @@ struct ParserState {
     relative_xyz: bool,
     relative_extruder: bool,
     unit_scale: f32,
+    feedrate_mm_s: f32,
+    feature: u8,
     layer: u32,
     layer_z: Option<f32>,
     toolpath: Toolpath,
@@ -51,6 +69,8 @@ impl ParserState {
             relative_xyz: false,
             relative_extruder: false,
             unit_scale: 1.0,
+            feedrate_mm_s: 0.0,
+            feature: 0,
             layer: 0,
             layer_z: None,
             toolpath: Toolpath::default(),
@@ -72,6 +92,8 @@ impl ParserState {
             to,
             kind,
             layer: self.layer,
+            speed: self.feedrate_mm_s,
+            feature: self.feature,
         });
         self.position = to;
     }
@@ -201,7 +223,37 @@ impl ParserState {
         self.position.z = words.z.map_or(self.position.z, |v| v * self.unit_scale);
     }
 
+    fn observe_comment(&mut self, line: &str) {
+        let line = line.trim();
+        if let Some(name) = feature_name(line) {
+            self.set_feature(name);
+        } else if let Some(seconds) = estimated_seconds(line) {
+            self.toolpath.estimated_seconds = Some(seconds);
+        }
+    }
+
+    fn set_feature(&mut self, name: &str) {
+        let names = &mut self.toolpath.feature_names;
+        let index = match names.iter().position(|known| known == name) {
+            Some(index) => index,
+            None => {
+                names.push(name.to_string());
+                names.len() - 1
+            }
+        };
+        self.feature = index.min(MAX_FEATURES - 1) as u8;
+    }
+
+    fn apply_feedrate(&mut self, words: &Words) {
+        if let Some(feedrate) = words.f {
+            self.feedrate_mm_s = feedrate * self.unit_scale / SECONDS_PER_MINUTE;
+        }
+    }
+
     fn execute(&mut self, command: &str, words: &Words) {
+        if matches!(command, "G0" | "G1" | "G2" | "G3") {
+            self.apply_feedrate(words);
+        }
         match command {
             "G0" | "G1" => self.linear_move(words),
             "G2" => self.arc_move(words, true),
@@ -233,6 +285,7 @@ struct Words {
     i: Option<f32>,
     j: Option<f32>,
     r: Option<f32>,
+    f: Option<f32>,
 }
 
 impl Words {
@@ -245,9 +298,43 @@ impl Words {
             'I' => self.i = Some(value),
             'J' => self.j = Some(value),
             'R' => self.r = Some(value),
+            'F' => self.f = Some(value),
             _ => {}
         }
     }
+}
+
+fn feature_name(line: &str) -> Option<&str> {
+    line.strip_prefix(";TYPE:")
+        .or_else(|| line.strip_prefix("; FEATURE:"))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn parse_duration_seconds(text: &str) -> Option<u32> {
+    let mut total = 0u32;
+    let mut any = false;
+    for token in text.split_whitespace() {
+        let (number, unit) = token.split_at(token.len().checked_sub(1)?);
+        let value: u32 = number.parse().ok()?;
+        let unit_seconds = match unit {
+            "d" => 86_400,
+            "h" => 3_600,
+            "m" => 60,
+            "s" => 1,
+            _ => return None,
+        };
+        total += value * unit_seconds;
+        any = true;
+    }
+    any.then_some(total)
+}
+
+fn estimated_seconds(line: &str) -> Option<u32> {
+    if let Some(rest) = line.strip_prefix("; estimated printing time (normal mode) =") {
+        return parse_duration_seconds(rest);
+    }
+    line.strip_prefix(";TIME:")?.trim().parse::<f32>().ok().map(|seconds| seconds as u32)
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -287,6 +374,26 @@ fn trimmed_range(mut values: Vec<f32>) -> (f32, f32) {
     (low, high)
 }
 
+fn compute_statistics(toolpath: &mut Toolpath) {
+    let mut speed_min = f32::MAX;
+    let mut speed_max = 0.0f32;
+    for segment in &toolpath.segments {
+        match segment.kind {
+            MoveKind::Extrude => {
+                toolpath.extrude_move_count += 1;
+                speed_min = speed_min.min(segment.speed);
+                speed_max = speed_max.max(segment.speed);
+            }
+            MoveKind::Travel => {
+                toolpath.travel_move_count += 1;
+                toolpath.travel_distance_mm += segment.from.distance(segment.to);
+            }
+        }
+    }
+    toolpath.speed_min = if speed_min == f32::MAX { 0.0 } else { speed_min };
+    toolpath.speed_max = speed_max;
+}
+
 fn compute_bounds(toolpath: &mut Toolpath) {
     let points: Vec<Vec3> = toolpath
         .segments
@@ -311,6 +418,10 @@ fn compute_bounds(toolpath: &mut Toolpath) {
 pub fn parse_gcode(source: &str) -> Toolpath {
     let mut state = ParserState::new();
     for line in source.lines() {
+        if line.starts_with(';') {
+            state.observe_comment(line);
+            continue;
+        }
         if let Some((command, words)) = parse_line(line) {
             state.execute(&command, &words);
         }
@@ -326,6 +437,7 @@ pub fn parse_gcode(source: &str) -> Toolpath {
         0
     };
     compute_bounds(&mut toolpath);
+    compute_statistics(&mut toolpath);
     toolpath
 }
 
@@ -386,6 +498,39 @@ mod tests {
         assert!(toolpath.segments.len() > 10);
         let end = toolpath.segments.last().unwrap().to;
         assert!((end.x).abs() < 1e-3 && (end.y - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn should_track_feed_rate_in_mm_per_second() {
+        let toolpath = parse_gcode("G1 X5 E1 F1200\nG1 X10 E2\nG1 X15 E3 F6000\n");
+        let speeds: Vec<f32> = toolpath.segments.iter().map(|segment| segment.speed).collect();
+        assert_eq!(speeds, vec![20.0, 20.0, 100.0]);
+        assert_eq!((toolpath.speed_min, toolpath.speed_max), (20.0, 100.0));
+    }
+
+    #[test]
+    fn should_group_segments_by_feature_comment() {
+        let toolpath = parse_gcode(
+            ";TYPE:Outer wall\nG1 X5 E1\n; FEATURE: Infill\nG1 X10 E2\n;TYPE:Outer wall\nG1 X15 E3\n",
+        );
+        assert_eq!(toolpath.feature_names, vec!["Outer wall", "Infill"]);
+        let features: Vec<u8> = toolpath.segments.iter().map(|segment| segment.feature).collect();
+        assert_eq!(features, vec![0, 1, 0]);
+    }
+
+    #[test]
+    fn should_parse_slicer_estimated_time() {
+        let toolpath = parse_gcode("G1 X5 E1\n; estimated printing time (normal mode) = 1d 2h 3m 4s\n");
+        assert_eq!(toolpath.estimated_seconds, Some(86_400 + 7_200 + 180 + 4));
+        assert_eq!(parse_duration_seconds("garbage"), None);
+    }
+
+    #[test]
+    fn should_count_moves_and_travel_distance() {
+        let toolpath = parse_gcode("G1 X10\nG1 X20 E1\nG1 X20 Y5\n");
+        assert_eq!(toolpath.extrude_move_count, 1);
+        assert_eq!(toolpath.travel_move_count, 2);
+        assert!((toolpath.travel_distance_mm - 15.0).abs() < 1e-4);
     }
 
     #[test]

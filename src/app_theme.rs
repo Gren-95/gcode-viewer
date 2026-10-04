@@ -91,8 +91,8 @@ pub fn slider_row<Num: egui::emath::Numeric>(
     value_text: String,
     value: &mut Num,
     range: std::ops::RangeInclusive<Num>,
-) {
+) -> egui::Response {
     value_row(ui, label, value_text);
     ui.spacing_mut().slider_width = ui.available_width();
-    ui.add(egui::Slider::new(value, range).show_value(false));
+    ui.add(egui::Slider::new(value, range).show_value(false))
 }

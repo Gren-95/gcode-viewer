@@ -1,8 +1,6 @@
 struct Uniforms {
     view_projection: mat4x4<f32>,
     light_view_projection: mat4x4<f32>,
-    color_low: vec4<f32>,
-    color_high: vec4<f32>,
     travel_color: vec4<f32>,
     light_direction: vec4<f32>,
     camera_position: vec4<f32>,
@@ -10,6 +8,10 @@ struct Uniforms {
     params: vec4<f32>,
     // min x, min y, max x, max y
     plane: vec4<f32>,
+    palette: array<vec4<f32>, 5>,
+    type_colors: array<vec4<f32>, 12>,
+    // x: colour mode (0 height, 1 speed, 2 layer, 3 feature type)
+    color_mode: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -107,11 +109,26 @@ fn light_surface(base_srgb: vec3<f32>, normal: vec3<f32>, world_position: vec3<f
     return pow(lit, vec3<f32>(1.0 / GAMMA));
 }
 
+fn palette_color(t: f32) -> vec3<f32> {
+    let scaled = clamp(t, 0.0, 1.0) * 4.0;
+    let index = min(u32(scaled), 3u);
+    return mix(uniforms.palette[index].rgb, uniforms.palette[index + 1u].rgb, scaled - f32(index));
+}
+
+// values: x height, y speed, z layer (all 0..1), w feature index
+fn extrude_color(values: vec4<f32>) -> vec3<f32> {
+    let mode = u32(uniforms.color_mode.x);
+    if (mode == 3u) {
+        return uniforms.type_colors[u32(values.w)].rgb;
+    }
+    return palette_color(values[mode]);
+}
+
 struct SurfaceVertex {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) height: f32,
+    @location(2) base_color: vec3<f32>,
 };
 
 @vertex
@@ -119,21 +136,20 @@ fn vs_tube(
     @builtin(vertex_index) vertex_index: u32,
     @location(0) start_point: vec3<f32>,
     @location(1) end_point: vec3<f32>,
-    @location(2) height: f32,
+    @location(2) values: vec4<f32>,
 ) -> SurfaceVertex {
     let world = tube_world_position(vertex_index, start_point, end_point);
     var output: SurfaceVertex;
     output.clip_position = uniforms.view_projection * vec4<f32>(world, 1.0);
     output.world_position = world;
     output.normal = tube_normal(vertex_index, start_point, end_point);
-    output.height = height;
+    output.base_color = extrude_color(values);
     return output;
 }
 
 @fragment
 fn fs_tube(input: SurfaceVertex) -> @location(0) vec4<f32> {
-    let base = mix(uniforms.color_low.rgb, uniforms.color_high.rgb, input.height);
-    return vec4<f32>(light_surface(base, input.normal, input.world_position), 1.0);
+    return vec4<f32>(light_surface(input.base_color, input.normal, input.world_position), 1.0);
 }
 
 @vertex
@@ -141,7 +157,7 @@ fn vs_shadow(
     @builtin(vertex_index) vertex_index: u32,
     @location(0) start_point: vec3<f32>,
     @location(1) end_point: vec3<f32>,
-    @location(2) height: f32,
+    @location(2) values: vec4<f32>,
 ) -> @builtin(position) vec4<f32> {
     let world = tube_world_position(vertex_index, start_point, end_point);
     return uniforms.light_view_projection * vec4<f32>(world, 1.0);
@@ -161,7 +177,7 @@ fn vs_plane(@builtin(vertex_index) vertex_index: u32) -> SurfaceVertex {
     output.clip_position = uniforms.view_projection * vec4<f32>(world, 1.0);
     output.world_position = world;
     output.normal = vec3<f32>(0.0, 0.0, 1.0);
-    output.height = 0.0;
+    output.base_color = vec3<f32>(0.0);
     return output;
 }
 
@@ -201,12 +217,12 @@ fn vs_extrude_line(
     @builtin(vertex_index) vertex_index: u32,
     @location(0) start_point: vec3<f32>,
     @location(1) end_point: vec3<f32>,
-    @location(2) height: f32,
+    @location(2) values: vec4<f32>,
 ) -> ExtrudeLineVertex {
     let position = select(start_point, end_point, vertex_index == 1u);
     var output: ExtrudeLineVertex;
     output.clip_position = uniforms.view_projection * vec4<f32>(position, 1.0);
-    output.color = mix(uniforms.color_low.rgb, uniforms.color_high.rgb, height);
+    output.color = extrude_color(values);
     return output;
 }
 

@@ -12,7 +12,8 @@ pub const LINE_WIDTH_MM: f32 = 0.45;
 pub struct ExtrudeInstance {
     pub from: [f32; 3],
     pub to: [f32; 3],
-    pub height: f32,
+    /// Normalised height, speed and layer in 0..1, then the feature index.
+    pub values: [f32; 4],
 }
 
 #[repr(C)]
@@ -86,6 +87,8 @@ fn estimate_layer_height(toolpath: &Toolpath) -> f32 {
 
 pub fn build_toolpath_mesh(toolpath: &Toolpath) -> ToolpathMesh {
     let height_span = (toolpath.max.z - toolpath.min.z).max(f32::EPSILON);
+    let speed_span = (toolpath.speed_max - toolpath.speed_min).max(f32::EPSILON);
+    let layer_span = toolpath.layer_count.saturating_sub(1).max(1) as f32;
     let normalized_height =
         |z: f32| ((z - toolpath.min.z) / height_span).clamp(0.0, 1.0);
     let mut mesh = ToolpathMesh {
@@ -101,7 +104,12 @@ pub fn build_toolpath_mesh(toolpath: &Toolpath) -> ToolpathMesh {
                 mesh.extrude.instances.push(ExtrudeInstance {
                     from: segment.from.to_array(),
                     to: segment.to.to_array(),
-                    height: normalized_height(segment.to.z),
+                    values: [
+                        normalized_height(segment.to.z),
+                        ((segment.speed - toolpath.speed_min) / speed_span).clamp(0.0, 1.0),
+                        (segment.layer as f32 / layer_span).clamp(0.0, 1.0),
+                        f32::from(segment.feature),
+                    ],
                 });
             }
             MoveKind::Travel => {

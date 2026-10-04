@@ -1,7 +1,10 @@
 mod app_theme;
+mod color_scheme;
+mod layer_player;
 mod nav_cube;
 mod orbit_camera;
 mod parse_gcode;
+mod sidebar_widgets;
 mod toolpath_mesh;
 mod toolpath_renderer;
 mod viewer_app;

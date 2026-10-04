@@ -1,3 +1,5 @@
+use crate::color_scheme::{ColorMode, FEATURE_COLORS, PALETTE_STOPS};
+use crate::parse_gcode::MAX_FEATURES;
 use crate::toolpath_mesh::{ExtrudeInstance, LINE_WIDTH_MM, ToolpathMesh, TravelVertex};
 use eframe::egui_wgpu::{self, wgpu, wgpu::util::DeviceExt};
 use glam::{Mat4, Vec3};
@@ -68,8 +70,6 @@ impl RenderQuality {
     }
 }
 
-const EXTRUDE_COLOR_LOW: [f32; 4] = [0.27, 0.52, 0.80, 1.0];
-const EXTRUDE_COLOR_HIGH: [f32; 4] = [0.96, 0.58, 0.28, 1.0];
 const TRAVEL_COLOR: [f32; 4] = [0.55, 0.58, 0.65, 0.30];
 const PLANE_HALF_EXTENT_FACTOR: f32 = 1.2;
 const SHADOW_FRUSTUM_FACTOR: f32 = 1.3;
@@ -80,13 +80,14 @@ const PLANE_GAP_MM: f32 = 0.01;
 struct Uniforms {
     view_projection: [[f32; 4]; 4],
     light_view_projection: [[f32; 4]; 4],
-    color_low: [f32; 4],
-    color_high: [f32; 4],
     travel_color: [f32; 4],
     light_direction: [f32; 4],
     camera_position: [f32; 4],
     params: [f32; 4],
     plane: [f32; 4],
+    palette: [[f32; 4]; PALETTE_STOPS],
+    type_colors: [[f32; 4]; MAX_FEATURES],
+    color_mode: [f32; 4],
 }
 
 struct Scene {
@@ -306,7 +307,7 @@ struct PipelineFactory<'a> {
 }
 
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32];
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
 const TRAVEL_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32];
 
@@ -470,6 +471,7 @@ pub struct ToolpathDraw {
     pub view_projection: Mat4,
     pub camera_position: Vec3,
     pub quality: RenderQuality,
+    pub color_mode: ColorMode,
     pub light: LightAngles,
     pub extrude_range: Range<u32>,
     pub travel_range: Option<Range<u32>>,
@@ -482,8 +484,6 @@ impl ToolpathDraw {
             view_projection: self.view_projection.to_cols_array_2d(),
             light_view_projection: light_view_projection(light_direction, scene.center, scene.radius)
                 .to_cols_array_2d(),
-            color_low: EXTRUDE_COLOR_LOW,
-            color_high: EXTRUDE_COLOR_HIGH,
             travel_color: TRAVEL_COLOR,
             light_direction: light_direction
                 .extend(f32::from(self.quality == RenderQuality::Shadowed))
@@ -496,6 +496,9 @@ impl ToolpathDraw {
                 1.0 / SHADOW_MAP_SIZE as f32,
             ],
             plane: scene.plane,
+            palette: self.color_mode.palette(),
+            type_colors: FEATURE_COLORS,
+            color_mode: [self.color_mode.shader_index(), 0.0, 0.0, 0.0],
         }
     }
 
